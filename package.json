@@ -1,0 +1,11 @@
+{
+  "name": "dental-website",
+  "version": "1.0.0",
+  "description": "Dental clinic website",
+  "scripts": {
+    "start": "live-server ."
+  },
+  "devDependencies": {
+    "live-server": "^1.2.2"
+  }
+}

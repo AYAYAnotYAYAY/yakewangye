@@ -1,0 +1,7 @@
+<![CDATA[User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://proclinicheihe.ru/sitemap.xml
+Sitemap: https://prodentalheihe.ru/sitemap.xml
+]]>
