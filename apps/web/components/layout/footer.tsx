@@ -16,11 +16,10 @@ export function Footer({ settings }: FooterProps) {
             <div className="site-footer-brand">{settings.brandName}</div>
             <p className="site-footer-desc">{settings.footerDescription}</p>
             <a
-              className="button primary"
+              className="button primary site-footer-cta"
               href={settings.primaryContact.telegramUrl}
               target="_blank"
               rel="noopener noreferrer"
-              style={{ marginTop: 20, display: "inline-flex" }}
             >
               💬 Telegram 咨询
             </a>
@@ -31,12 +30,12 @@ export function Footer({ settings }: FooterProps) {
             <h4>联系方式</h4>
             <div>{settings.primaryContact.phone}</div>
             <div>{settings.primaryContact.address}</div>
-            <div style={{ marginTop: 8 }}>
+            <div className="site-footer-link-wrap">
               <a
                 href={settings.primaryContact.telegramUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: "rgba(255,255,255,0.7)" }}
+                className="site-footer-link"
               >
                 {settings.primaryContact.telegramHandle}
               </a>
@@ -48,12 +47,7 @@ export function Footer({ settings }: FooterProps) {
             <h4>快速导航</h4>
             {settings.navigation.map((item) => (
               <div key={item.id}>
-                <a
-                  href={item.href}
-                  style={{ color: "rgba(255,255,255,0.7)", transition: "color 0.18s" }}
-                  onMouseEnter={(e) => (e.currentTarget.style.color = "#fff")}
-                  onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.7)")}
-                >
+                <a href={item.href} className="site-footer-link">
                   {item.label}
                 </a>
               </div>

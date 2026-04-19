@@ -46,7 +46,7 @@ export function Header({ settings }: HeaderProps) {
         </a>
 
         {/* Desktop nav */}
-        <nav className="site-nav" style={{ display: "flex" }}>
+        <nav className="site-nav">
           {settings.navigation.map((item) => (
             <a key={item.id} href={toAnchor(item.href)} onClick={handleNavClick}>
               {item.label}

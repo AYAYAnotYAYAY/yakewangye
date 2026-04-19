@@ -14,6 +14,42 @@ export type AdminStatus =
       source: "setup_required";
     };
 
+function unique(values: string[]) {
+  return [...new Set(values)];
+}
+
+function getApiBaseCandidates() {
+  if (typeof window === "undefined") {
+    return [API_BASE_URL];
+  }
+
+  const { protocol, hostname, port } = window.location;
+  const sameOrigin = API_BASE_URL;
+  const host4000 =
+    hostname && port !== "4000" && protocol
+      ? `${protocol}//${hostname}:4000`
+      : "";
+
+  return unique([sameOrigin, host4000].filter(Boolean));
+}
+
+async function fetchWithFallback(input: string, init?: RequestInit) {
+  let lastError: unknown;
+
+  for (const base of getApiBaseCandidates()) {
+    try {
+      return await fetch(`${base}${input}`, {
+        ...init,
+        cache: "no-store",
+      });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError ?? new Error(`Failed to fetch: ${input}`);
+}
+
 export function resolveAssetUrl(value: string) {
   if (!value) {
     return "";
@@ -31,7 +67,7 @@ export function resolveAssetUrl(value: string) {
 }
 
 export async function fetchContent() {
-  const response = await fetch(`${API_BASE_URL}/api/content`);
+  const response = await fetchWithFallback("/api/content");
 
   if (!response.ok) {
     throw new Error("Failed to fetch content");
@@ -48,7 +84,7 @@ function createAdminHeaders(token: string, extra?: HeadersInit) {
 }
 
 export async function loginAdmin(payload: { username: string; password: string }) {
-  const response = await fetch(`${API_BASE_URL}/api/admin/login`, {
+  const response = await fetchWithFallback("/api/admin/login", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -74,7 +110,7 @@ export async function loginAdmin(payload: { username: string; password: string }
 }
 
 export async function fetchAdminStatus() {
-  const response = await fetch(`${API_BASE_URL}/api/admin/status`);
+  const response = await fetchWithFallback("/api/admin/status");
 
   if (!response.ok) {
     throw new Error("无法获取后台状态");
@@ -84,7 +120,7 @@ export async function fetchAdminStatus() {
 }
 
 export async function setupAdmin(payload: { username: string; password: string }) {
-  const response = await fetch(`${API_BASE_URL}/api/admin/setup`, {
+  const response = await fetchWithFallback("/api/admin/setup", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -110,7 +146,7 @@ export async function setupAdmin(payload: { username: string; password: string }
 }
 
 export async function fetchAdminMe(token: string) {
-  const response = await fetch(`${API_BASE_URL}/api/admin/me`, {
+  const response = await fetchWithFallback("/api/admin/me", {
     headers: createAdminHeaders(token),
   });
 
@@ -125,7 +161,7 @@ export async function fetchAdminMe(token: string) {
 }
 
 export async function fetchAdminContent(token: string) {
-  const response = await fetch(`${API_BASE_URL}/api/admin/content`, {
+  const response = await fetchWithFallback("/api/admin/content", {
     headers: createAdminHeaders(token),
   });
 
@@ -137,7 +173,7 @@ export async function fetchAdminContent(token: string) {
 }
 
 export async function saveContent(content: CmsContent, token: string) {
-  const response = await fetch(`${API_BASE_URL}/api/admin/content`, {
+  const response = await fetchWithFallback("/api/admin/content", {
     method: "PUT",
     headers: {
       ...createAdminHeaders(token),
@@ -157,7 +193,7 @@ export async function uploadFile(file: File, token: string) {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE_URL}/api/admin/upload`, {
+  const response = await fetchWithFallback("/api/admin/upload", {
     method: "POST",
     headers: createAdminHeaders(token),
     body: formData,
@@ -171,7 +207,7 @@ export async function uploadFile(file: File, token: string) {
 }
 
 export async function fetchChatSessions(token: string) {
-  const response = await fetch(`${API_BASE_URL}/api/chat/sessions`, {
+  const response = await fetchWithFallback("/api/chat/sessions", {
     headers: createAdminHeaders(token),
   });
 
@@ -188,7 +224,7 @@ export async function sendChatMessage(payload: {
   language: "zh" | "ru" | "en";
   message: string;
 }) {
-  const response = await fetch(`${API_BASE_URL}/api/chat/triage`, {
+  const response = await fetchWithFallback("/api/chat/triage", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
