@@ -227,7 +227,7 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
     server_name ${DOMAIN_PRIMARY} ${DOMAIN_SECONDARY};
 
     ssl_certificate     ${CERT_CRT};
