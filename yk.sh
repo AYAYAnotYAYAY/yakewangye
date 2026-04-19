@@ -113,15 +113,21 @@ if [[ ${#PKGS_NEEDED[@]} -gt 0 ]]; then
 fi
 
 # Node.js
-if ! command -v node &>/dev/null; then
+if ! command -v node &>/dev/null || [[ "$(node -e "process.stdout.write(process.version.slice(1).split('.')[0])")" -lt "$NODE_MIN_MAJOR" ]]; then
   info "安装 Node.js ${NODE_MIN_MAJOR}.x ..."
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MIN_MAJOR}.x" | bash - >/dev/null
+  # 添加 nodesource 源（忽略其内部 apt update 的警告）
+  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MIN_MAJOR}.x" | bash - 2>&1 | grep -v "^W:" || true
+  # 再次禁用 backports（setup 脚本可能重新触发了 apt update 报错）
+  find /etc/apt/sources.list.d/ -name "*.list" -exec \
+    sed -i 's|^deb .*bullseye-backports.*|# &|g' {} \; 2>/dev/null || true
+  sed -i 's|^deb .*bullseye-backports.*|# &|g' /etc/apt/sources.list 2>/dev/null || true
+  apt-get update -y -qq 2>&1 | grep -v "^W:" || true
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs
 fi
 
 NODE_MAJOR=$(node -e "process.stdout.write(process.version.slice(1).split('.')[0])")
 if [[ "$NODE_MAJOR" -lt "$NODE_MIN_MAJOR" ]]; then
-  error "Node.js 版本过低 (当前 v${NODE_MAJOR}，需要 v${NODE_MIN_MAJOR}+)"
+  error "Node.js 版本过低 (当前 v${NODE_MAJOR}，需要 v${NODE_MIN_MAJOR}+)，请手动运行: curl -fsSL https://deb.nodesource.com/setup_${NODE_MIN_MAJOR}.x | bash - && apt-get install -y nodejs"
   exit 1
 fi
 
