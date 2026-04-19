@@ -273,6 +273,59 @@ h1, h2, h3, h4 {
   border-top: 1px solid var(--line);
 }
 
+.longpage-flow-card,
+.longpage-contact-card {
+  padding: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(20, 194, 163, 0.08), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 255, 0.98));
+}
+
+.longpage-flow-heading,
+.longpage-contact-copy {
+  max-width: 760px;
+}
+
+.longpage-flow-grid,
+.longpage-contact-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.longpage-flow-step,
+.longpage-contact-item {
+  padding: 22px;
+}
+
+.longpage-flow-index {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--primary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.longpage-flow-step h3,
+.longpage-contact-item strong {
+  display: block;
+  margin: 10px 0 8px;
+  font-size: 20px;
+}
+
+.longpage-flow-step p,
+.longpage-contact-item p {
+  color: var(--muted);
+  line-height: 1.75;
+}
+
+.longpage-cta-row {
+  margin-top: 22px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .price-value {
   margin: 10px 0 12px;
   font-size: 32px;
@@ -852,6 +905,24 @@ h1, h2, h3, h4 {
   margin-bottom: 14px;
 }
 
+.admin-entity-title {
+  min-width: 0;
+}
+
+.admin-entity-title strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.admin-entity-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1124,6 +1195,11 @@ h1, h2, h3, h4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .longpage-flow-grid,
+  .longpage-contact-grid {
+    grid-template-columns: 1fr;
+  }
+
   .admin-layout {
     grid-template-columns: 1fr;
   }
@@ -1317,6 +1393,26 @@ h1, h2, h3, h4 {
     font-size: 12px;
   }
 
+  .longpage-flow-card,
+  .longpage-contact-card {
+    padding: 18px;
+  }
+
+  .longpage-flow-step,
+  .longpage-contact-item {
+    padding: 18px;
+  }
+
+  .longpage-flow-step h3,
+  .longpage-contact-item strong {
+    font-size: 18px;
+  }
+
+  .longpage-cta-row {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
   /* List page */
   .list-page {
     padding: 20px 16px;
@@ -1423,14 +1519,14 @@ h1, h2, h3, h4 {
     gap: 10px;
   }
 
-  .admin-entity-head > div {
+  .admin-entity-actions {
     width: 100%;
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
   }
 
-  .admin-entity-head > div .button {
+  .admin-entity-actions .button {
     flex: 1;
     justify-content: center;
   }

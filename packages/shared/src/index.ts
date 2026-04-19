@@ -297,11 +297,13 @@ const siteSettingsSeed: SiteSettings = {
     telegramUrl: "https://t.me/quanyu_consult",
   },
   navigation: [
+    { id: "ai-chat", label: "AI 问诊", href: "#ai-chat" },
     { id: "services", label: "服务项目", href: "/services" },
     { id: "doctors", label: "医生团队", href: "/doctors" },
     { id: "pricing", label: "价格说明", href: "/pricing" },
     { id: "articles", label: "文章内容", href: "/articles" },
     { id: "gallery", label: "图册视频", href: "/gallery" },
+    { id: "contact", label: "联系咨询", href: "#contact" },
   ],
 };
 

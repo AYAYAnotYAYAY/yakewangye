@@ -23,7 +23,7 @@ function usePathname() {
 
 function PageShell(props: { content: CmsContent; children: ReactNode }) {
   return (
-    <main>
+    <main id="top">
       <Header settings={props.content.siteSettings} />
       {props.children}
       <Footer settings={props.content.siteSettings} />
@@ -56,9 +56,9 @@ function MediaPreview(props: { src: string; alt: string }) {
   return <img className="entity-image" src={resolveAssetUrl(props.src)} alt={props.alt} />;
 }
 
-function ArticleList(props: { items: Article[] }) {
+function ArticleList(props: { items: Article[]; anchorId?: string }) {
   return props.items.length ? (
-    <section>
+    <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
           <span className="eyebrow">文章</span>
@@ -85,9 +85,9 @@ function ArticleList(props: { items: Article[] }) {
   );
 }
 
-function DoctorList(props: { items: Doctor[] }) {
+function DoctorList(props: { items: Doctor[]; anchorId?: string }) {
   return props.items.length ? (
-    <section>
+    <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
           <span className="eyebrow">医生</span>
@@ -116,9 +116,9 @@ function DoctorList(props: { items: Doctor[] }) {
   );
 }
 
-function ServiceList(props: { items: ServiceItem[] }) {
+function ServiceList(props: { items: ServiceItem[]; anchorId?: string }) {
   return props.items.length ? (
-    <section>
+    <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
           <span className="eyebrow">服务</span>
@@ -145,9 +145,9 @@ function ServiceList(props: { items: ServiceItem[] }) {
   );
 }
 
-function PricingList(props: { items: PricingItem[] }) {
+function PricingList(props: { items: PricingItem[]; anchorId?: string }) {
   return props.items.length ? (
-    <section>
+    <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
           <span className="eyebrow">价格</span>
@@ -173,9 +173,9 @@ function PricingList(props: { items: PricingItem[] }) {
   );
 }
 
-function GalleryList(props: { items: GalleryAsset[] }) {
+function GalleryList(props: { items: GalleryAsset[]; anchorId?: string }) {
   return props.items.length ? (
-    <section>
+    <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
           <span className="eyebrow">图册</span>
@@ -198,6 +198,100 @@ function GalleryList(props: { items: GalleryAsset[] }) {
     </section>
   ) : (
     <EmptyState title="暂无图册内容" description="后台还没有录入图册或视频内容。" />
+  );
+}
+
+function TriageFlowSection(props: { content: CmsContent }) {
+  return (
+    <section id="ai-chat">
+      <div className="container">
+        <div className="card longpage-flow-card">
+          <div className="section-heading longpage-flow-heading">
+            <span className="eyebrow">AI 导诊</span>
+            <h2>先在线问诊，再进入 Telegram 和真人医生沟通</h2>
+            <p>首页在手机上最重要的不是塞更多入口，而是让来访用户一路往下翻时，随时知道下一步该怎么做。</p>
+          </div>
+          <div className="longpage-flow-grid">
+            {[
+              {
+                title: "描述症状或项目",
+                summary: "牙疼、缺牙、修复、美白、种植、价格咨询，都可以先问。",
+              },
+              {
+                title: "AI 先做初筛",
+                summary: "先判断是否紧急、是否高意向、是否应该尽快转真人。",
+              },
+              {
+                title: "继续发片子和资料",
+                summary: "高意向用户直接转 Telegram，继续发影像、问价格和预约。",
+              },
+            ].map((item, index) => (
+              <article key={item.title} className="card longpage-flow-step">
+                <div className="longpage-flow-index">0{index + 1}</div>
+                <h3>{item.title}</h3>
+                <p>{item.summary}</p>
+              </article>
+            ))}
+          </div>
+          <div className="longpage-cta-row">
+            <a
+              className="button primary"
+              href={props.content.telegramConfig.contactUrl || props.content.siteSettings.primaryContact.telegramUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              现在去 Telegram
+            </a>
+            <a className="button secondary" href="#services">
+              继续看项目和价格
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ContactBand(props: { content: CmsContent }) {
+  const telegramUrl = props.content.telegramConfig.contactUrl || props.content.siteSettings.primaryContact.telegramUrl;
+
+  return (
+    <section id="contact">
+      <div className="container">
+        <div className="card longpage-contact-card">
+          <div className="longpage-contact-copy">
+            <span className="eyebrow">联系方式</span>
+            <h2>翻到最后，直接联系，不再让用户跳来跳去</h2>
+            <p>手机用户通常不会耐心点很多子页面。最后这一屏就是电话、地址、Telegram 和下一步动作，看到就能立刻转化。</p>
+          </div>
+          <div className="longpage-contact-grid">
+            <article className="card longpage-contact-item">
+              <div className="entity-meta">电话</div>
+              <strong>{props.content.siteSettings.primaryContact.phone}</strong>
+              <p>适合直接联系、回拨和快速确认。</p>
+            </article>
+            <article className="card longpage-contact-item">
+              <div className="entity-meta">地址</div>
+              <strong>{props.content.siteSettings.primaryContact.address}</strong>
+              <p>适合继续讲路线、住宿和跨境到诊。</p>
+            </article>
+            <article className="card longpage-contact-item">
+              <div className="entity-meta">Telegram</div>
+              <strong>{props.content.siteSettings.primaryContact.telegramHandle}</strong>
+              <p>适合继续发片子、问价格、约时间。</p>
+            </article>
+          </div>
+          <div className="longpage-cta-row">
+            <a className="button primary" href={telegramUrl} target="_blank" rel="noreferrer">
+              直接去 Telegram
+            </a>
+            <a className="button secondary" href="#top">
+              返回顶部
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -290,35 +384,16 @@ export function App() {
   // 所有内容都在首页单页滚动展示，不再跳转子页面
   return (
     <PageShell content={content}>
-      {/* 首页 hero + 核心 sections */}
       {content.homePage.sections.map((section) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
-
-      {/* 服务项目 */}
-      <div id="services">
-        <ServiceList items={content.services} />
-      </div>
-
-      {/* 医生团队 */}
-      <div id="doctors">
-        <DoctorList items={content.doctors} />
-      </div>
-
-      {/* 价格说明 */}
-      <div id="pricing">
-        <PricingList items={content.pricing} />
-      </div>
-
-      {/* 图册视频 */}
-      <div id="gallery">
-        <GalleryList items={content.gallery} />
-      </div>
-
-      {/* 文章内容 */}
-      <div id="articles">
-        <ArticleList items={content.articles} />
-      </div>
+      <TriageFlowSection content={content} />
+      <ServiceList items={content.services} anchorId="services" />
+      <DoctorList items={content.doctors} anchorId="doctors" />
+      <PricingList items={content.pricing} anchorId="pricing" />
+      <GalleryList items={content.gallery} anchorId="gallery" />
+      <ArticleList items={content.articles} anchorId="articles" />
+      <ContactBand content={content} />
     </PageShell>
   );
 }

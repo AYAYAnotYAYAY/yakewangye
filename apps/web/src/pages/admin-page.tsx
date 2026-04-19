@@ -208,8 +208,22 @@ function EntityListEditor<T extends { id: string }>(props: {
   onAdd: () => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, next: T) => void;
+  getSummary: (item: T, index: number) => string;
   renderItem: (item: T, onChange: (next: T) => void) => ReactNode;
 }) {
+  const [openId, setOpenId] = useState<string | null>(props.items[0]?.id ?? null);
+
+  useEffect(() => {
+    if (!props.items.length) {
+      setOpenId(null);
+      return;
+    }
+
+    if (!openId || !props.items.some((item) => item.id === openId)) {
+      setOpenId(props.items[0].id);
+    }
+  }, [openId, props.items]);
+
   return (
     <div className="card admin-panel">
       <EntityToolbar title={props.title} onAdd={props.onAdd} />
@@ -217,14 +231,20 @@ function EntityListEditor<T extends { id: string }>(props: {
         {props.items.map((item, index) => (
           <article key={item.id} className="card admin-entity-card">
             <div className="admin-entity-head">
-              <strong>
-                {props.title} #{index + 1}
-              </strong>
-              <button className="button secondary" onClick={() => props.onRemove(item.id)} type="button">
-                删除
-              </button>
+              <div className="admin-entity-title">
+                <strong>{props.getSummary(item, index)}</strong>
+                <span className="entity-note">{props.title} #{index + 1}</span>
+              </div>
+              <div className="admin-entity-actions">
+                <button className="button secondary" onClick={() => setOpenId((current) => (current === item.id ? null : item.id))} type="button">
+                  {openId === item.id ? "收起" : "展开"}
+                </button>
+                <button className="button secondary" onClick={() => props.onRemove(item.id)} type="button">
+                  删除
+                </button>
+              </div>
             </div>
-            <div className="admin-grid">{props.renderItem(item, (next) => props.onUpdate(item.id, next))}</div>
+            {openId === item.id ? <div className="admin-grid">{props.renderItem(item, (next) => props.onUpdate(item.id, next))}</div> : null}
           </article>
         ))}
       </div>
@@ -677,6 +697,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             <EntityListEditor
               title="文章"
               items={draft.articles}
+              getSummary={(item) => item.title || item.slug || "未命名文章"}
               onAdd={() =>
                 setDraft((current) => ({
                   ...current,
@@ -729,6 +750,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             <EntityListEditor
               title="医生"
               items={draft.doctors}
+              getSummary={(item) => item.name || "未命名医生"}
               onAdd={() =>
                 setDraft((current) => ({
                   ...current,
@@ -775,6 +797,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             <EntityListEditor
               title="服务"
               items={draft.services}
+              getSummary={(item) => item.name || "未命名服务"}
               onAdd={() =>
                 setDraft((current) => ({
                   ...current,
@@ -819,6 +842,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             <EntityListEditor
               title="价格"
               items={draft.pricing}
+              getSummary={(item) => item.name || "未命名价格项"}
               onAdd={() =>
                 setDraft((current) => ({
                   ...current,
@@ -861,6 +885,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             <EntityListEditor
               title="图册视频"
               items={draft.gallery}
+              getSummary={(item) => item.title || "未命名媒体"}
               onAdd={() =>
                 setDraft((current) => ({
                   ...current,
@@ -909,6 +934,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             <EntityListEditor
               title="自定义页面"
               items={draft.pages}
+              getSummary={(item) => item.title || item.slug || "未命名页面"}
               onAdd={() =>
                 setDraft((current) => ({
                   ...current,

@@ -11,6 +11,11 @@
     },
     "navigation": [
       {
+        "id": "ai-chat",
+        "label": "AI 问诊",
+        "href": "#ai-chat"
+      },
+      {
         "id": "services",
         "label": "服务项目",
         "href": "#services"
@@ -34,6 +39,11 @@
         "id": "gallery",
         "label": "图册视频",
         "href": "#gallery"
+      },
+      {
+        "id": "contact",
+        "label": "联系咨询",
+        "href": "#contact"
       }
     ]
   },
