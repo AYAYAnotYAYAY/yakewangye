@@ -91,6 +91,17 @@ if ! command -v apt-get &>/dev/null; then
   exit 1
 fi
 
+# 修复可能损坏的 backports 源，避免 apt update 报错
+if grep -r "bullseye-backports" /etc/apt/sources.list /etc/apt/sources.list.d/ &>/dev/null 2>&1; then
+  info "检测到 bullseye-backports 源，临时禁用以避免 apt 报错 ..."
+  find /etc/apt/sources.list.d/ -name "*.list" -exec \
+    sed -i 's|^deb .*bullseye-backports.*|# &|g' {} \; 2>/dev/null || true
+  sed -i 's|^deb .*bullseye-backports.*|# &|g' /etc/apt/sources.list 2>/dev/null || true
+fi
+
+info "更新软件包索引 ..."
+apt-get update -y -qq 2>&1 | grep -v "^W:" || true
+
 PKGS_NEEDED=()
 for pkg in git curl nginx; do
   command -v "$pkg" &>/dev/null || PKGS_NEEDED+=("$pkg")
@@ -98,7 +109,6 @@ done
 
 if [[ ${#PKGS_NEEDED[@]} -gt 0 ]]; then
   info "安装缺失包: ${PKGS_NEEDED[*]}"
-  apt-get update -y -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${PKGS_NEEDED[@]}"
 fi
 
