@@ -1,6 +1,6 @@
 import type { ChatSession, CmsContent } from "@quanyu/shared";
 
-const API_BASE_URL = "http://localhost:4000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "";
 export const ADMIN_TOKEN_STORAGE_KEY = "quanyu_admin_token";
 
 export type AdminStatus =
