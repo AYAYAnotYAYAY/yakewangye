@@ -18,7 +18,7 @@ DOMAIN_SECONDARY="prodentalheihe.ru"
 NGINX_CONF_NAME="yakewangye"
 WEB_ROOT="/var/www/yakewangye"
 API_PORT="4000"
-NODE_MIN_MAJOR=18
+NODE_MIN_MAJOR=20
 SCRIPT_INSTALL_PATH="/usr/local/bin/yk"
 
 # ── 颜色 ──────────────────────────────────────────────────────
@@ -92,11 +92,14 @@ if ! command -v apt-get &>/dev/null; then
 fi
 
 # 修复可能损坏的 backports 源，避免 apt update 报错
-if grep -r "bullseye-backports" /etc/apt/sources.list /etc/apt/sources.list.d/ &>/dev/null 2>&1; then
-  info "检测到 bullseye-backports 源，临时禁用以避免 apt 报错 ..."
-  find /etc/apt/sources.list.d/ -name "*.list" -exec \
-    sed -i 's|^deb .*bullseye-backports.*|# &|g' {} \; 2>/dev/null || true
-  sed -i 's|^deb .*bullseye-backports.*|# &|g' /etc/apt/sources.list 2>/dev/null || true
+_disable_backports() {
+  find /etc/apt/sources.list.d/ -name "*.list" \
+    -exec sed -i 's|^\(deb .*bullseye-backports.*\)|# \1|g' {} \; 2>/dev/null || true
+  sed -i 's|^\(deb .*bullseye-backports.*\)|# \1|g' /etc/apt/sources.list 2>/dev/null || true
+}
+if grep -rq "^deb .*bullseye-backports" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+  info "检测到 bullseye-backports 源，禁用以避免 apt 报错 ..."
+  _disable_backports
 fi
 
 info "更新软件包索引 ..."
@@ -117,10 +120,8 @@ if ! command -v node &>/dev/null || [[ "$(node -e "process.stdout.write(process.
   info "安装 Node.js ${NODE_MIN_MAJOR}.x ..."
   # 添加 nodesource 源（忽略其内部 apt update 的警告）
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MIN_MAJOR}.x" | bash - 2>&1 | grep -v "^W:" || true
-  # 再次禁用 backports（setup 脚本可能重新触发了 apt update 报错）
-  find /etc/apt/sources.list.d/ -name "*.list" -exec \
-    sed -i 's|^deb .*bullseye-backports.*|# &|g' {} \; 2>/dev/null || true
-  sed -i 's|^deb .*bullseye-backports.*|# &|g' /etc/apt/sources.list 2>/dev/null || true
+  # setup 脚本可能重新触发 backports 报错，再次禁用
+  _disable_backports
   apt-get update -y -qq 2>&1 | grep -v "^W:" || true
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs
 fi
