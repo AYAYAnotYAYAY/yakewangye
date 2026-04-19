@@ -1,11 +1,26 @@
 {
-  "name": "dental-website",
-  "version": "1.0.0",
-  "description": "Dental clinic website",
+  "name": "quanyu-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.18.3",
+  "description": "Quanyu multilingual marketing platform workspace",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "start": "live-server ."
+    "dev": "concurrently -n web,api -c blue,green \"npm run dev --workspace @quanyu/web\" \"npm run dev --workspace @quanyu/api\"",
+    "dev:web": "npm run dev --workspace @quanyu/web",
+    "dev:api": "npm run dev --workspace @quanyu/api",
+    "build": "npm run build --workspace @quanyu/shared && npm run build --workspace @quanyu/api && npm run build --workspace @quanyu/web",
+    "lint": "npm run lint --workspace @quanyu/web && npm run lint --workspace @quanyu/api",
+    "typecheck": "npm run typecheck --workspace @quanyu/shared && npm run typecheck --workspace @quanyu/api && npm run typecheck --workspace @quanyu/web",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
   },
   "devDependencies": {
-    "live-server": "^1.2.2"
+    "@types/node": "^22.15.3",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.3"
   }
 }

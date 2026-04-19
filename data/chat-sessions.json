@@ -1,0 +1,83 @@
+[
+  {
+    "sessionId": "demo-session",
+    "language": "zh",
+    "visitorId": "demo-visitor",
+    "startedAt": "2026-04-19T09:27:01.371Z",
+    "updatedAt": "2026-04-19T09:27:01.373Z",
+    "triage": {
+      "intent": "pricing",
+      "urgent": true,
+      "recommendedAction": "escalate_to_human",
+      "suggestedNextStep": "建议尽快转 Telegram 或真人医生继续沟通，并补充疼痛程度、持续时间、是否出血。"
+    },
+    "messages": [
+      {
+        "id": "user-603b61f0-0143-4306-b9a0-72e6707af260",
+        "role": "user",
+        "content": "我右边牙疼三天了，还出血，想问价格",
+        "createdAt": "2026-04-19T09:27:01.372Z"
+      },
+      {
+        "id": "assistant-524336b8-7cdf-4037-81b9-5c86f0b43ca2",
+        "role": "assistant",
+        "content": "我先帮你做初步分诊。请告诉我你的主要问题、持续多久了、是否疼痛或出血、是否已经拍过片，我再给你下一步建议。\n\n当前判断：存在较高紧急度。建议尽快转 Telegram 或真人医生继续沟通，并补充疼痛程度、持续时间、是否出血。",
+        "createdAt": "2026-04-19T09:27:01.373Z"
+      }
+    ]
+  },
+  {
+    "sessionId": "demo-session-2",
+    "language": "zh",
+    "visitorId": "demo-visitor",
+    "startedAt": "2026-04-19T09:27:54.362Z",
+    "updatedAt": "2026-04-19T09:27:54.364Z",
+    "triage": {
+      "intent": "pricing",
+      "urgent": false,
+      "recommendedAction": "collect_lead",
+      "suggestedNextStep": "可以继续收集缺牙情况、是否拍片、想做哪类治疗，再引导进入 Telegram。"
+    },
+    "messages": [
+      {
+        "id": "user-7bcbfc5a-ba54-41a2-b2f3-a239ca576d6f",
+        "role": "user",
+        "content": "我想做种植牙，想先问流程和费用",
+        "createdAt": "2026-04-19T09:27:54.363Z"
+      },
+      {
+        "id": "assistant-9b0c3366-acd8-4778-bf13-349edc7f285a",
+        "role": "assistant",
+        "content": "我先帮你做初步分诊。请告诉我你的主要问题、持续多久了、是否疼痛或出血、是否已经拍过片，我再给你下一步建议。\n\n当前判断：可继续初步问诊。可以继续收集缺牙情况、是否拍片、想做哪类治疗，再引导进入 Telegram。",
+        "createdAt": "2026-04-19T09:27:54.363Z"
+      }
+    ]
+  },
+  {
+    "sessionId": "lead-check",
+    "language": "zh",
+    "visitorId": "lead-visitor",
+    "startedAt": "2026-04-19T09:36:03.689Z",
+    "updatedAt": "2026-04-19T09:36:03.690Z",
+    "messages": [
+      {
+        "id": "user-e21945cb-348f-46e3-ae89-a93cefe1205b",
+        "role": "user",
+        "content": "我有种植牙需求，想了解价格和时间",
+        "createdAt": "2026-04-19T09:36:03.689Z"
+      },
+      {
+        "id": "assistant-6f2c29fc-eee6-449f-983a-fa3cc76aeb31",
+        "role": "assistant",
+        "content": "我先帮你做初步分诊。请告诉我你的主要问题、持续多久了、是否疼痛或出血、是否已经拍过片，我再给你下一步建议。\n\n当前判断：可继续初步问诊。可以继续收集缺牙情况、是否拍片、想做哪类治疗，再引导进入 Telegram。",
+        "createdAt": "2026-04-19T09:36:03.690Z"
+      }
+    ],
+    "triage": {
+      "intent": "pricing",
+      "urgent": false,
+      "recommendedAction": "collect_lead",
+      "suggestedNextStep": "可以继续收集缺牙情况、是否拍片、想做哪类治疗，再引导进入 Telegram。"
+    }
+  }
+]

@@ -1,0 +1,288 @@
+{
+  "siteSettings": {
+    "brandName": "泉寓门诊",
+    "topbarNotice": "俄语/中文/英语站点、多语言 SEO、AI 导诊与 Telegram 转化系统",
+    "footerDescription": "这是第一版可运行骨架，目标是为后续 CMS、AI 问诊、文章发布、访客分析与 CRM 打下稳定基础。",
+    "primaryContact": {
+      "phone": "+86 9619527988",
+      "address": "黑龙江省黑河市爱辉区花园街道环城东路33号",
+      "telegramHandle": "@quanyu_consult",
+      "telegramUrl": "https://t.me/quanyu_consult"
+    },
+    "navigation": [
+      {
+        "id": "services",
+        "label": "服务项目",
+        "href": "#services"
+      },
+      {
+        "id": "doctors",
+        "label": "医生团队",
+        "href": "#doctors"
+      },
+      {
+        "id": "pricing",
+        "label": "价格说明",
+        "href": "#pricing"
+      },
+      {
+        "id": "articles",
+        "label": "文章内容",
+        "href": "#articles"
+      },
+      {
+        "id": "gallery",
+        "label": "图册视频",
+        "href": "#gallery"
+      }
+    ]
+  },
+  "homePage": {
+    "slug": "/",
+    "title": "泉寓门诊首页",
+    "seoTitle": "泉寓门诊 | AI 导诊 + Telegram 转人工 + SEO 营销平台",
+    "seoDescription": "模块化官网、文章系统、图册视频、AI 导诊、Telegram 转人工、访客分析与管理后台的一体化骨架。",
+    "sections": [
+      {
+        "id": "hero-home",
+        "type": "hero",
+        "eyebrow": "Admin Ready",
+        "title": "现在开始把官网内容改成真正可在后台编辑",
+        "description": "你可以在后台修改首页、图册、文章、医生、服务、价格和自定义页面，前台直接读取最新内容。",
+        "actions": [
+          {
+            "label": "进入 Telegram",
+            "href": "https://t.me/quanyu_consult",
+            "variant": "primary"
+          },
+          {
+            "label": "打开后台",
+            "href": "/admin",
+            "variant": "secondary"
+          }
+        ],
+        "highlights": [
+          {
+            "label": "后台模块",
+            "value": "7 个"
+          },
+          {
+            "label": "本地存储",
+            "value": "JSON CMS"
+          },
+          {
+            "label": "下一阶段",
+            "value": "Strapi/Postgres"
+          }
+        ],
+        "aiPanel": {
+          "title": "AI 导诊流转",
+          "description": "访客先由 AI 助手完成初步分诊，再导向 Telegram 或人工医生。当前版已经把内容后台和接口打通。",
+          "steps": [
+            "1. 后台维护服务、医生、文章和价格",
+            "2. 前台按 API 内容动态渲染",
+            "3. 下一阶段接 AI 会话和 TG Bot 转接"
+          ]
+        }
+      },
+      {
+        "id": "services-home",
+        "type": "services",
+        "eyebrow": "运营内容",
+        "title": "服务、医生、图册、文章都可以在后台维护",
+        "description": "这里的首页模块只是前台展示的一部分，核心内容实体会单独存储，后台可以独立管理它们。",
+        "items": [
+          {
+            "tag": "Services",
+            "title": "服务介绍",
+            "summary": "种植牙、修复、美白、正畸等服务由后台维护，并可同步展示到首页和服务页。",
+            "ctaLabel": "支持新增服务"
+          },
+          {
+            "tag": "Doctors",
+            "title": "医生介绍",
+            "summary": "医生头像、擅长方向、经验和简介都在后台维护。",
+            "ctaLabel": "支持新增医生"
+          },
+          {
+            "tag": "Pricing",
+            "title": "价格介绍",
+            "summary": "价格项目拆成独立列表，适合后续接多语言和渠道定价。",
+            "ctaLabel": "支持新增价格项"
+          }
+        ]
+      },
+      {
+        "id": "journey-home",
+        "type": "journey",
+        "eyebrow": "内容流程",
+        "title": "先把可编辑内容做好，再继续接 AI、TG 和统计",
+        "description": "现在这个后台最重要的价值是让你不再改代码就能管理核心内容，后面接 AI 与分析时就不会和内容系统打架。",
+        "steps": [
+          {
+            "title": "Admin 维护内容",
+            "summary": "通过后台录入文章、医生、服务、图册和价格页面。"
+          },
+          {
+            "title": "前台自动同步",
+            "summary": "前台不再依赖写死数据，而是实时读取 API。"
+          },
+          {
+            "title": "接入 AI 与 TG",
+            "summary": "内容实体成为 AI 知识来源，也成为客户转化的展示素材。"
+          },
+          {
+            "title": "接分析系统",
+            "summary": "在内容稳定后再接访问、线索、转化和来源分析。"
+          }
+        ]
+      },
+      {
+        "id": "gallery-home",
+        "type": "gallery",
+        "eyebrow": "媒体展示",
+        "title": "图册和视频支持后台维护",
+        "description": "当前版已经提供媒体列表管理，图片支持上传，视频可先用封面图和说明占位。",
+        "items": [
+          {
+            "title": "门诊环境",
+            "summary": "展示门诊环境、接待区、诊室和设备。",
+            "cover": "linear-gradient(135deg, #b8d6ff, #f4fbff)"
+          },
+          {
+            "title": "术前术后案例",
+            "summary": "可维护案例图册和说明。",
+            "cover": "linear-gradient(135deg, #dff9f3, #c2fff2)"
+          },
+          {
+            "title": "视频展示",
+            "summary": "可录入视频标题、说明和封面图。",
+            "cover": "linear-gradient(135deg, #fff2cc, #ffe2a8)"
+          }
+        ]
+      },
+      {
+        "id": "articles-home",
+        "type": "articles",
+        "eyebrow": "SEO 内容",
+        "title": "文章系统支持 SEO 字段维护",
+        "description": "文章标题、slug、摘要、正文、SEO 标题、SEO 描述和封面图都可以在后台管理。",
+        "items": [
+          {
+            "slug": "implantation-heihe-overview",
+            "category": "种植牙",
+            "title": "黑河种植牙常见问题与跨境就诊说明",
+            "excerpt": "解释适用人群、流程、材料差异和术后恢复，适合作为搜索入口文章。",
+            "seoTitle": "黑河种植牙指南 | 费用、流程、恢复期"
+          },
+          {
+            "slug": "urgent-toothache-first-step",
+            "category": "急症",
+            "title": "牙疼、出血、松动时应该先做什么",
+            "excerpt": "这类内容既能承接搜索，也能被 AI 调用为标准化初步建议。",
+            "seoTitle": "牙疼怎么办 | 先判断风险再转医生"
+          },
+          {
+            "slug": "cross-border-consultation-telegram",
+            "category": "转化",
+            "title": "为什么要先 AI 分诊，再进入 Telegram 沟通",
+            "excerpt": "减少人工重复问答，提高客服和医生的时间效率。",
+            "seoTitle": "AI 导诊 + Telegram 人工转接方案"
+          }
+        ]
+      },
+      {
+        "id": "analytics-home",
+        "type": "analytics",
+        "eyebrow": "下一阶段",
+        "title": "内容后台已经具备，下一步直接接线索、AI 和分析面板",
+        "description": "当前版已经为后续的 AI 导诊、Telegram 转人工、会话分析和运营面板提供稳定内容源。",
+        "metrics": [
+          {
+            "label": "内容实体",
+            "value": "6 类",
+            "note": "首页、文章、医生、服务、价格、图册、自定义页"
+          },
+          {
+            "label": "后台入口",
+            "value": "/admin",
+            "note": "先做本地内容后台，再接鉴权和正式 CMS"
+          },
+          {
+            "label": "可扩展方向",
+            "value": "AI + TG + 分析",
+            "note": "内容系统已经是后续功能的基础层"
+          }
+        ]
+      }
+    ]
+  },
+  "articles": [
+    {
+      "id": "article-1",
+      "slug": "implantation-heihe-overview",
+      "title": "黑河种植牙常见问题与跨境就诊说明",
+      "category": "种植牙",
+      "excerpt": "解释适用人群、流程、材料差异和术后恢复，适合作为搜索入口文章。",
+      "content": "这是一篇后台可编辑的文章示例。后续可以替换为富文本编辑器与正式 CMS 存储。",
+      "coverImage": "",
+      "seoTitle": "黑河种植牙指南 | 费用、流程、恢复期",
+      "seoDescription": "用于 SEO 和搜索引擎着陆的种植牙文章示例。",
+      "publishedAt": "2026-04-19"
+    }
+  ],
+  "doctors": [
+    {
+      "id": "doctor-1",
+      "name": "张医生",
+      "title": "种植修复主任医师",
+      "summary": "专注种植牙与复杂修复，负责跨境患者初诊评估与方案制定。",
+      "specialties": [
+        "种植牙",
+        "修复",
+        "复杂病例"
+      ],
+      "image": "",
+      "experience": "12 年临床经验"
+    }
+  ],
+  "services": [
+    {
+      "id": "service-1",
+      "name": "种植牙",
+      "category": "修复治疗",
+      "summary": "针对缺牙、咀嚼功能下降与美观修复的综合方案。",
+      "details": "支持单颗、多颗及半口方案评估。",
+      "image": ""
+    }
+  ],
+  "pricing": [
+    {
+      "id": "pricing-1",
+      "name": "种植牙初诊评估",
+      "category": "诊断",
+      "price": "¥299 起",
+      "notes": "以最终拍片和口腔情况为准。"
+    }
+  ],
+  "gallery": [
+    {
+      "id": "gallery-1",
+      "title": "门诊接待区",
+      "summary": "用于展示诊所环境。",
+      "imageUrl": "",
+      "mediaType": "image"
+    }
+  ],
+  "pages": [
+    {
+      "id": "page-1",
+      "slug": "price-guide",
+      "title": "价格说明页",
+      "summary": "介绍价格结构、透明报价和咨询方式。",
+      "content": "这是一个后台可编辑的自定义页面示例。",
+      "seoTitle": "泉寓门诊价格说明",
+      "seoDescription": "支持自定义页面和 SEO 字段。"
+    }
+  ]
+}

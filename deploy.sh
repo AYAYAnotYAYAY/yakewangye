@@ -1,4 +1,3 @@
-<![CDATA[#!/usr/bin/env bash
 set -euo pipefail
 
 # One-click deploy script for Quanyu Dental static website
