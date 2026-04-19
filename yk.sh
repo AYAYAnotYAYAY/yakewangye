@@ -37,6 +37,43 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# ── --reset 选项：清除所有配置，保留证书，推倒重来 ────────────
+if [[ "${1:-}" == "--reset" ]]; then
+  step "重置：清除所有配置（证书保留）"
+
+  # 停止并删除 PM2 进程
+  if command -v pm2 &>/dev/null; then
+    pm2 delete yakewangye-api 2>/dev/null || true
+    pm2 save --force >/dev/null 2>&1 || true
+    info "PM2 进程已清除"
+  fi
+
+  # 删除 nginx 配置
+  rm -f "/etc/nginx/sites-enabled/${NGINX_CONF_NAME}.conf"
+  rm -f "/etc/nginx/sites-available/${NGINX_CONF_NAME}.conf"
+  # 恢复 default 站点（避免 nginx 无配置报错）
+  if [[ -f /etc/nginx/sites-available/default ]]; then
+    ln -sfn /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default 2>/dev/null || true
+  fi
+  nginx -t -q 2>/dev/null && systemctl reload nginx 2>/dev/null || true
+  info "Nginx 配置已清除"
+
+  # 删除网站静态文件
+  rm -rf "${WEB_ROOT}"
+  info "静态文件已清除: ${WEB_ROOT}"
+
+  # 删除项目代码
+  rm -rf "${APP_DIR}"
+  info "项目代码已清除: ${APP_DIR}"
+
+  # 删除 .env（如果在项目目录外有备份则跳过）
+  echo ""
+  success "重置完成，证书目录 ${CERT_DIR} 已保留"
+  echo -e "  现在直接运行 ${BOLD}yk${RESET} 重新部署"
+  echo ""
+  exit 0
+fi
+
 # ── 自安装为 yk 命令 ──────────────────────────────────────────
 if [[ "${BASH_SOURCE[0]}" != "${SCRIPT_INSTALL_PATH}" ]]; then
   info "将脚本安装为全局命令 yk ..."
