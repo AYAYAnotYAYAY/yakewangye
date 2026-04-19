@@ -31,7 +31,7 @@
 - 全局 CSS 设计系统（医疗风格，含 design token、响应式、scroll-reveal 动效）
 - sticky 毛玻璃 Header + 移动端汉堡菜单
 - 深色品牌 Footer（三栏布局，移动端折叠）
-- 一键部署脚本 `yk.sh`（自动安装为 `yk` 全局命令）
+- 菜单式运维脚本 `yk.sh`（自动安装为 `yk` 全局命令）
 
 尚未具备：
 
@@ -177,25 +177,22 @@ corepack pnpm run dev
 
 修改脚本后需要：
 1. 提交到 GitHub main 分支
-2. 在服务器上运行一次 `yk`（会自动拉取新代码并重新复制脚本到 `/usr/local/bin/yk`）
+2. 在服务器上运行一次 `sudo bash yk.sh` 或 `yk`，让脚本自我复制到 `/usr/local/bin/yk`
 
-**关键配置变量（脚本顶部）**
+**当前菜单项**
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `REPO_URL` | GitHub 仓库地址 | 代码来源 |
-| `APP_DIR` | `/opt/yakewangye` | 服务器代码目录 |
-| `CERT_DIR` | `/root/ygkkkca` | SSL 证书目录 |
-| `DOMAIN_PRIMARY` | `proclinicheihe.ru` | 主域名 |
-| `DOMAIN_SECONDARY` | `prodentalheihe.ru` | 副域名 |
-| `API_PORT` | `4000` | 后端 API 端口 |
+1. 状态检查
+2. 安全更新代码
+3. 创建备份
+4. 还原备份
 
-**证书逻辑**
+**脚本维护原则**
 
-- 检查 `${CERT_DIR}/cert.crt` 和 `${CERT_DIR}/private.key`
-- 存在 → HTTPS 模式（nginx 含 HTTP→HTTPS 跳转）
-- 不存在 → 询问是否申请 Let's Encrypt；申请后自动复制到 `CERT_DIR` 并注册续期 deploy hook
-- 拒绝 → HTTP 模式
+- 不要再把“首次部署”和“日常更新”混成同一条无脑流程
+- 日常更新不能用 `git reset --hard`
+- 日常更新必须先检测 PM2 和 nginx，再决定是否重启 / reload
+- 日常更新不能删除 `data`、`uploads`、`postgres-data` 等本地数据
+- 还原前必须先自动备份当前状态
 
 ## 文档维护要求
 

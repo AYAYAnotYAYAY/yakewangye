@@ -1,29 +1,22 @@
 #!/usr/bin/env bash
-# =============================================================
-#  yk — 牙科网站一键部署 / 更新脚本
-#  用法:
-#    首次部署:  sudo bash yk.sh
-#    日常更新:  yk          (安装后直接用命令)
-# =============================================================
 set -euo pipefail
 
-# ── 配置 ──────────────────────────────────────────────────────
 REPO_URL="https://github.com/AYAYAnotYAYAY/yakewangye.git"
+REPO_BRANCH="main"
 APP_DIR="/opt/yakewangye"
-CERT_DIR="/root/ygkkkca"
-CERT_CRT="${CERT_DIR}/cert.crt"
-CERT_KEY="${CERT_DIR}/private.key"
-DOMAIN_PRIMARY="proclinicheihe.ru"
-DOMAIN_SECONDARY="prodentalheihe.ru"
-NGINX_CONF_NAME="yakewangye"
 WEB_ROOT="/var/www/yakewangye"
-API_PORT="4000"
-NODE_MIN_MAJOR=20
+NGINX_CONF_NAME="yakewangye"
+NGINX_CONF="/etc/nginx/sites-available/${NGINX_CONF_NAME}.conf"
+PM2_APP="yakewangye-api"
 SCRIPT_INSTALL_PATH="/usr/local/bin/yk"
+BACKUP_ROOT="/opt/yk-backups"
 
-# ── 颜色 ──────────────────────────────────────────────────────
-RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
 
 info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
 success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
@@ -31,398 +24,442 @@ warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 step()    { echo -e "\n${BOLD}━━━ $* ━━━${RESET}"; }
 
-# ── Root 检查 ─────────────────────────────────────────────────
-if [[ $EUID -ne 0 ]]; then
-  error "请用 root 运行: sudo bash yk.sh"
-  exit 1
-fi
-
-# ── --reset 选项：清除所有配置，保留证书，推倒重来 ────────────
-if [[ "${1:-}" == "--reset" ]]; then
-  step "重置：清除所有配置（证书保留）"
-
-  # 停止并删除 PM2 进程
-  if command -v pm2 &>/dev/null; then
-    pm2 delete yakewangye-api 2>/dev/null || true
-    pm2 save --force >/dev/null 2>&1 || true
-    info "PM2 进程已清除"
+require_root() {
+  if [[ $EUID -ne 0 ]]; then
+    error "请用 root 运行: sudo bash yk.sh"
+    exit 1
   fi
-
-  # 删除 nginx 配置
-  rm -f "/etc/nginx/sites-enabled/${NGINX_CONF_NAME}.conf"
-  rm -f "/etc/nginx/sites-available/${NGINX_CONF_NAME}.conf"
-  # 恢复 default 站点（避免 nginx 无配置报错）
-  if [[ -f /etc/nginx/sites-available/default ]]; then
-    ln -sfn /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default 2>/dev/null || true
-  fi
-  nginx -t -q 2>/dev/null && systemctl reload nginx 2>/dev/null || true
-  info "Nginx 配置已清除"
-
-  # 删除网站静态文件
-  rm -rf "${WEB_ROOT}"
-  info "静态文件已清除: ${WEB_ROOT}"
-
-  # 删除项目代码
-  rm -rf "${APP_DIR}"
-  info "项目代码已清除: ${APP_DIR}"
-
-  # 删除 .env（如果在项目目录外有备份则跳过）
-  echo ""
-  success "重置完成，证书目录 ${CERT_DIR} 已保留"
-  echo -e "  现在直接运行 ${BOLD}yk${RESET} 重新部署"
-  echo ""
-  exit 0
-fi
-
-# ── 自安装为 yk 命令 ──────────────────────────────────────────
-if [[ "${BASH_SOURCE[0]}" != "${SCRIPT_INSTALL_PATH}" ]]; then
-  info "将脚本安装为全局命令 yk ..."
-  cp -f "${BASH_SOURCE[0]}" "${SCRIPT_INSTALL_PATH}"
-  chmod +x "${SCRIPT_INSTALL_PATH}"
-  success "已安装: 以后直接运行 'yk' 即可"
-fi
-
-# ═════════════════════════════════════════════════════════════
-step "1 / 7  检查系统依赖"
-# ═════════════════════════════════════════════════════════════
-
-if ! command -v apt-get &>/dev/null; then
-  error "仅支持 Debian / Ubuntu (apt)"
-  exit 1
-fi
-
-# 修复可能损坏的 backports 源，避免 apt update 报错
-_disable_backports() {
-  find /etc/apt/sources.list.d/ -name "*.list" \
-    -exec sed -i 's|^\(deb .*bullseye-backports.*\)|# \1|g' {} \; 2>/dev/null || true
-  sed -i 's|^\(deb .*bullseye-backports.*\)|# \1|g' /etc/apt/sources.list 2>/dev/null || true
 }
-if grep -rq "^deb .*bullseye-backports" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
-  info "检测到 bullseye-backports 源，禁用以避免 apt 报错 ..."
-  _disable_backports
-fi
 
-info "更新软件包索引 ..."
-apt-get update -y -qq 2>&1 | grep -v "^W:" || true
+install_self() {
+  if [[ "${BASH_SOURCE[0]}" != "${SCRIPT_INSTALL_PATH}" ]]; then
+    cp -f "${BASH_SOURCE[0]}" "${SCRIPT_INSTALL_PATH}"
+    chmod +x "${SCRIPT_INSTALL_PATH}"
+    success "已安装全局命令: yk"
+  fi
+}
 
-PKGS_NEEDED=()
-for pkg in git curl nginx; do
-  command -v "$pkg" &>/dev/null || PKGS_NEEDED+=("$pkg")
-done
-
-if [[ ${#PKGS_NEEDED[@]} -gt 0 ]]; then
-  info "安装缺失包: ${PKGS_NEEDED[*]}"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${PKGS_NEEDED[@]}"
-fi
-
-# Node.js
-if ! command -v node &>/dev/null || [[ "$(node -e "process.stdout.write(process.version.slice(1).split('.')[0])")" -lt "$NODE_MIN_MAJOR" ]]; then
-  info "安装 Node.js ${NODE_MIN_MAJOR}.x ..."
-  # 添加 nodesource 源（忽略其内部 apt update 的警告）
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MIN_MAJOR}.x" | bash - 2>&1 | grep -v "^W:" || true
-  # setup 脚本可能重新触发 backports 报错，再次禁用
-  _disable_backports
-  apt-get update -y -qq 2>&1 | grep -v "^W:" || true
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs
-fi
-
-NODE_MAJOR=$(node -e "process.stdout.write(process.version.slice(1).split('.')[0])")
-if [[ "$NODE_MAJOR" -lt "$NODE_MIN_MAJOR" ]]; then
-  error "Node.js 版本过低 (当前 v${NODE_MAJOR}，需要 v${NODE_MIN_MAJOR}+)，请手动运行: curl -fsSL https://deb.nodesource.com/setup_${NODE_MIN_MAJOR}.x | bash - && apt-get install -y nodejs"
-  exit 1
-fi
-
-# pnpm
-if ! command -v pnpm &>/dev/null; then
-  info "安装 pnpm ..."
-  npm install -g pnpm --silent
-fi
-
-success "依赖检查完成 (node $(node -v), pnpm $(pnpm -v))"
-
-# ═════════════════════════════════════════════════════════════
-step "2 / 7  拉取 / 更新代码"
-# ═════════════════════════════════════════════════════════════
-
-if [[ -d "${APP_DIR}/.git" ]]; then
-  info "已有仓库，执行 git pull ..."
-  git -C "${APP_DIR}" fetch --all -q
-  git -C "${APP_DIR}" reset --hard origin/main -q
-  success "代码已更新到最新 main 分支"
-else
-  info "首次克隆仓库到 ${APP_DIR} ..."
-  git clone --depth=1 "${REPO_URL}" "${APP_DIR}"
-  success "克隆完成"
-fi
-
-# ═════════════════════════════════════════════════════════════
-step "3 / 7  检查 SSL 证书"
-# ═════════════════════════════════════════════════════════════
-
-CERT_OK=false
-if [[ -f "${CERT_CRT}" && -f "${CERT_KEY}" ]]; then
-  success "证书已存在: ${CERT_DIR}"
-  CERT_OK=true
-else
-  warn "未找到证书文件:"
-  warn "  ${CERT_CRT}"
-  warn "  ${CERT_KEY}"
+pause() {
   echo ""
-  read -r -p "$(echo -e "${YELLOW}是否现在自动申请 Let's Encrypt 证书？[y/N]${RESET} ")" APPLY_CERT
-  if [[ "${APPLY_CERT,,}" == "y" ]]; then
-    # 安装 certbot
-    if ! command -v certbot &>/dev/null; then
-      info "安装 certbot ..."
-      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq certbot python3-certbot-nginx
-    fi
+  read -r -p "按回车继续..." _
+}
 
-    read -r -p "$(echo -e "${CYAN}请输入 Let's Encrypt 邮箱: ${RESET}")" LE_EMAIL
-    if [[ -z "${LE_EMAIL}" ]]; then
-      error "邮箱不能为空，跳过证书申请，将使用 HTTP 模式"
+ask_yes_no() {
+  local prompt="${1}"
+  local answer=""
+  read -r -p "$(echo -e "${YELLOW}${prompt} [y/N] ${RESET}")" answer
+  [[ "${answer,,}" == "y" ]]
+}
+
+has_repo() {
+  [[ -d "${APP_DIR}/.git" ]]
+}
+
+has_nginx_conf() {
+  [[ -f "${NGINX_CONF}" ]]
+}
+
+has_pm2() {
+  command -v pm2 >/dev/null 2>&1
+}
+
+pm2_app_exists() {
+  has_pm2 && pm2 describe "${PM2_APP}" >/dev/null 2>&1
+}
+
+nginx_installed() {
+  command -v nginx >/dev/null 2>&1
+}
+
+nginx_active() {
+  command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx
+}
+
+docker_compose_available() {
+  command -v docker >/dev/null 2>&1 && [[ -f "${APP_DIR}/docker-compose.yml" ]]
+}
+
+docker_services_running() {
+  docker_compose_available && (cd "${APP_DIR}" && docker compose ps --status running --services 2>/dev/null | grep -q .)
+}
+
+ensure_repo_exists() {
+  if has_repo; then
+    return 0
+  fi
+
+  warn "未检测到仓库: ${APP_DIR}"
+  if ask_yes_no "是否先克隆仓库到 ${APP_DIR}？"; then
+    mkdir -p "$(dirname "${APP_DIR}")"
+    git clone --branch "${REPO_BRANCH}" --depth=1 "${REPO_URL}" "${APP_DIR}"
+    success "仓库已克隆"
+    return 0
+  fi
+
+  return 1
+}
+
+show_status() {
+  step "环境与服务状态"
+
+  echo "脚本路径: ${SCRIPT_INSTALL_PATH}"
+  echo "项目目录: ${APP_DIR}"
+  echo "静态目录: ${WEB_ROOT}"
+  echo "备份目录: ${BACKUP_ROOT}"
+  echo ""
+
+  if command -v git >/dev/null 2>&1; then
+    success "git 已安装"
+  else
+    warn "git 未安装"
+  fi
+
+  if command -v node >/dev/null 2>&1; then
+    success "Node.js: $(node -v)"
+  else
+    warn "Node.js 未安装"
+  fi
+
+  if command -v pnpm >/dev/null 2>&1; then
+    success "pnpm: $(pnpm -v)"
+  else
+    warn "pnpm 未安装"
+  fi
+
+  if has_repo; then
+    success "仓库存在"
+    echo "分支: $(git -C "${APP_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+    echo "提交: $(git -C "${APP_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
+      warn "工作区有未提交改动，安全更新将拒绝执行"
     else
-      info "申请证书 (${DOMAIN_PRIMARY}, ${DOMAIN_SECONDARY}) ..."
-      # 先用 HTTP 模式启动 nginx 以通过 ACME 验证
-      _tmp_conf="/etc/nginx/sites-available/_yk_tmp.conf"
-      cat > "${_tmp_conf}" <<TMPEOF
-server {
-    listen 80;
-    server_name ${DOMAIN_PRIMARY} ${DOMAIN_SECONDARY};
-    root /var/www/html;
-    location /.well-known/acme-challenge/ { root /var/www/html; }
-}
-TMPEOF
-      ln -sfn "${_tmp_conf}" "/etc/nginx/sites-enabled/_yk_tmp.conf"
-      nginx -t -q && systemctl reload nginx
-
-      certbot certonly --nginx \
-        -d "${DOMAIN_PRIMARY}" -d "${DOMAIN_SECONDARY}" \
-        --agree-tos --non-interactive -m "${LE_EMAIL}" \
-        --cert-name "${NGINX_CONF_NAME}"
-
-      # 复制到约定目录
-      mkdir -p "${CERT_DIR}"
-      LE_LIVE="/etc/letsencrypt/live/${DOMAIN_PRIMARY}"
-      cp -f "${LE_LIVE}/fullchain.pem" "${CERT_CRT}"
-      cp -f "${LE_LIVE}/privkey.pem"   "${CERT_KEY}"
-      chmod 600 "${CERT_KEY}"
-
-      # 自动续期 hook
-      DEPLOY_HOOK="/etc/letsencrypt/renewal-hooks/deploy/yk-copy-cert.sh"
-      cat > "${DEPLOY_HOOK}" <<HOOKEOF
-#!/bin/bash
-cp -f /etc/letsencrypt/live/${DOMAIN_PRIMARY}/fullchain.pem ${CERT_CRT}
-cp -f /etc/letsencrypt/live/${DOMAIN_PRIMARY}/privkey.pem   ${CERT_KEY}
-chmod 600 ${CERT_KEY}
-systemctl reload nginx
-HOOKEOF
-      chmod +x "${DEPLOY_HOOK}"
-
-      rm -f "/etc/nginx/sites-enabled/_yk_tmp.conf" "${_tmp_conf}"
-      CERT_OK=true
-      success "证书申请成功，已复制到 ${CERT_DIR}"
+      success "工作区干净"
     fi
   else
-    warn "跳过证书申请，将以 HTTP 模式部署（不推荐用于生产）"
+    warn "仓库不存在"
   fi
-fi
 
-# ═════════════════════════════════════════════════════════════
-step "4 / 7  构建前端"
-# ═════════════════════════════════════════════════════════════
+  [[ -f "${APP_DIR}/.env" ]] && success ".env 已存在" || warn ".env 不存在"
+  [[ -d "${APP_DIR}/data" ]] && success "data 目录存在" || warn "data 目录不存在"
+  [[ -d "${APP_DIR}/apps/api/uploads" ]] && success "上传目录存在" || warn "上传目录不存在"
+  [[ -d "${APP_DIR}/postgres-data" ]] && success "postgres-data 目录存在" || warn "postgres-data 目录不存在"
 
-cd "${APP_DIR}"
+  if nginx_installed; then
+    success "nginx 已安装"
+    has_nginx_conf && success "nginx 配置存在: ${NGINX_CONF}" || warn "nginx 配置不存在: ${NGINX_CONF}"
+    nginx_active && success "nginx 正在运行" || warn "nginx 未运行"
+  else
+    warn "nginx 未安装"
+  fi
 
-# 生成 .env（如果不存在）
-if [[ ! -f ".env" ]]; then
-  info "从 .env.example 生成 .env ..."
-  cp .env.example .env
-  warn "请检查并修改 ${APP_DIR}/.env 中的生产配置"
-fi
+  if has_pm2; then
+    success "pm2 已安装"
+    if pm2_app_exists; then
+      success "PM2 进程存在: ${PM2_APP}"
+      pm2 describe "${PM2_APP}" | sed -n '1,20p'
+    else
+      warn "未检测到 PM2 进程: ${PM2_APP}"
+    fi
+  else
+    warn "pm2 未安装"
+  fi
 
-info "安装依赖 (pnpm install) ..."
-pnpm install --frozen-lockfile --silent
-
-info "构建前端 (pnpm --filter web build) ..."
-pnpm --filter web build
-
-# 前端产物目录
-WEB_DIST="${APP_DIR}/apps/web/dist"
-if [[ ! -d "${WEB_DIST}" ]]; then
-  error "前端构建产物不存在: ${WEB_DIST}"
-  exit 1
-fi
-
-success "前端构建完成"
-
-# ═════════════════════════════════════════════════════════════
-step "5 / 7  部署静态文件"
-# ═════════════════════════════════════════════════════════════
-
-mkdir -p "${WEB_ROOT}"
-rsync -a --delete "${WEB_DIST}/" "${WEB_ROOT}/"
-chown -R www-data:www-data "${WEB_ROOT}"
-success "静态文件已同步到 ${WEB_ROOT}"
-
-# ═════════════════════════════════════════════════════════════
-step "6 / 7  配置 Nginx"
-# ═════════════════════════════════════════════════════════════
-
-NGINX_AVAIL="/etc/nginx/sites-available/${NGINX_CONF_NAME}.conf"
-NGINX_ENABLED="/etc/nginx/sites-enabled/${NGINX_CONF_NAME}.conf"
-
-if [[ "${CERT_OK}" == "true" ]]; then
-  info "写入 HTTPS nginx 配置 ..."
-  cat > "${NGINX_AVAIL}" <<NGINXEOF
-# 自动生成 by yk.sh — 勿手动修改
-server {
-    listen 80;
-    server_name ${DOMAIN_PRIMARY} ${DOMAIN_SECONDARY};
-    return 301 https://\$host\$request_uri;
+  if docker_compose_available; then
+    success "docker compose 可用"
+    (cd "${APP_DIR}" && docker compose ps) || true
+  else
+    warn "docker compose 不可用，或项目目录下没有 docker-compose.yml"
+  fi
 }
 
-server {
-    listen 443 ssl;
-    server_name ${DOMAIN_PRIMARY} ${DOMAIN_SECONDARY};
+safe_update_code() {
+  step "安全更新代码"
 
-    ssl_certificate     ${CERT_CRT};
-    ssl_certificate_key ${CERT_KEY};
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
-    ssl_session_cache   shared:SSL:10m;
-    ssl_session_timeout 10m;
+  ensure_repo_exists || return 1
 
-    root  ${WEB_ROOT};
-    index index.html;
+  if [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
+    error "检测到本地未提交改动，已停止更新。请先提交、备份或手动处理。"
+    return 1
+  fi
 
-    # SPA fallback
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
+  info "获取远程最新提交 ..."
+  git -C "${APP_DIR}" fetch origin "${REPO_BRANCH}" --prune
 
-    # API 反代
-    location /api/ {
-        proxy_pass         http://127.0.0.1:${API_PORT}/;
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade \$http_upgrade;
-        proxy_set_header   Connection keep-alive;
-        proxy_set_header   Host \$host;
-        proxy_set_header   X-Real-IP \$remote_addr;
-        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-    }
+  local local_sha remote_sha
+  local_sha="$(git -C "${APP_DIR}" rev-parse HEAD)"
+  remote_sha="$(git -C "${APP_DIR}" rev-parse "origin/${REPO_BRANCH}")"
 
-    # 静态资源缓存
-    location ~* \.(css|js|woff2?|ttf|svg|ico|png|jpg|jpeg|webp|gif)$ {
-        expires 30d;
-        add_header Cache-Control "public, max-age=2592000, immutable";
-        access_log off;
-    }
+  if [[ "${local_sha}" == "${remote_sha}" ]]; then
+    success "代码已是最新，无需更新"
+    return 0
+  fi
 
-    location = /robots.txt  { try_files \$uri =404; }
-    location = /sitemap.xml { try_files \$uri =404; }
+  info "执行 fast-forward 更新 ..."
+  git -C "${APP_DIR}" pull --ff-only origin "${REPO_BRANCH}"
 
-    # 安全头
-    add_header X-Frame-Options       "SAMEORIGIN"   always;
-    add_header X-Content-Type-Options "nosniff"     always;
-    add_header Referrer-Policy       "strict-origin" always;
+  if ! command -v pnpm >/dev/null 2>&1; then
+    error "pnpm 未安装，无法继续构建"
+    return 1
+  fi
+
+  cd "${APP_DIR}"
+
+  if [[ -f ".env.example" && ! -f ".env" ]]; then
+    cp .env.example .env
+    warn "未找到 .env，已从 .env.example 生成，请检查生产配置"
+  fi
+
+  info "安装依赖 ..."
+  pnpm install --frozen-lockfile
+
+  info "执行构建 ..."
+  pnpm run build
+
+  if [[ -d "${APP_DIR}/apps/web/dist" ]]; then
+    mkdir -p "${WEB_ROOT}"
+    rsync -a --delete "${APP_DIR}/apps/web/dist/" "${WEB_ROOT}/"
+    if id -u www-data >/dev/null 2>&1; then
+      chown -R www-data:www-data "${WEB_ROOT}"
+    fi
+    success "前端产物已同步到 ${WEB_ROOT}"
+  else
+    warn "未找到前端产物目录，跳过静态文件同步"
+  fi
+
+  if pm2_app_exists; then
+    info "检测到 PM2 进程，执行重启 ..."
+    pm2 restart "${PM2_APP}" --update-env
+    pm2 save --force >/dev/null 2>&1 || true
+    success "PM2 进程已重启"
+  else
+    warn "未检测到 PM2 进程 ${PM2_APP}，跳过后端重启"
+  fi
+
+  if nginx_installed && has_nginx_conf; then
+    info "检测到 nginx 配置，执行语法检查 ..."
+    nginx -t
+    if nginx_active; then
+      systemctl reload nginx
+      success "nginx 已重载"
+    else
+      warn "nginx 未运行，仅完成配置校验，不做 reload"
+    fi
+  else
+    warn "未检测到 nginx 或配置文件，跳过 nginx 操作"
+  fi
+
+  success "安全更新完成。未触碰 data、uploads、postgres-data 等本地数据目录。"
 }
-NGINXEOF
-else
-  info "写入 HTTP nginx 配置 ..."
-  cat > "${NGINX_AVAIL}" <<NGINXEOF
-# 自动生成 by yk.sh — 勿手动修改 (HTTP 模式)
-server {
-    listen 80;
-    server_name ${DOMAIN_PRIMARY} ${DOMAIN_SECONDARY};
 
-    root  ${WEB_ROOT};
-    index index.html;
+create_backup() {
+  step "创建备份"
 
-    location / {
-        try_files \$uri \$uri/ /index.html;
-    }
+  ensure_repo_exists || return 1
 
-    location /api/ {
-        proxy_pass         http://127.0.0.1:${API_PORT}/;
-        proxy_http_version 1.1;
-        proxy_set_header   Host \$host;
-        proxy_set_header   X-Real-IP \$remote_addr;
-        proxy_set_header   X-Forwarded-For \$proxy_add_x_forwarded_for;
-    }
+  mkdir -p "${BACKUP_ROOT}"
 
-    location ~* \.(css|js|woff2?|ttf|svg|ico|png|jpg|jpeg|webp|gif)$ {
-        expires 7d;
-        add_header Cache-Control "public, max-age=604800";
-        access_log off;
-    }
+  local ts tmp_dir payload_dir backup_file app_parent app_name
+  ts="$(date +%Y%m%d-%H%M%S)"
+  tmp_dir="$(mktemp -d /tmp/yk-backup.XXXXXX)"
+  payload_dir="${tmp_dir}/payload"
+  backup_file="${BACKUP_ROOT}/yk-backup-${ts}.tar.gz"
+  app_parent="$(dirname "${APP_DIR}")"
+  app_name="$(basename "${APP_DIR}")"
 
-    location = /robots.txt  { try_files \$uri =404; }
-    location = /sitemap.xml { try_files \$uri =404; }
+  mkdir -p "${payload_dir}"
+
+  cat > "${payload_dir}/manifest.txt" <<EOF
+created_at=$(date -Iseconds)
+host=$(hostname)
+repo_branch=$(git -C "${APP_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+repo_commit=$(git -C "${APP_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)
+app_dir=${APP_DIR}
+web_root=${WEB_ROOT}
+nginx_conf=${NGINX_CONF}
+pm2_app=${PM2_APP}
+EOF
+
+  info "打包项目目录（排除 .git / node_modules / dist 缓存）..."
+  tar -C "${app_parent}" \
+    --exclude="${app_name}/.git" \
+    --exclude="${app_name}/node_modules" \
+    --exclude="${app_name}/apps/web/node_modules" \
+    --exclude="${app_name}/apps/api/node_modules" \
+    --exclude="${app_name}/packages/shared/node_modules" \
+    --exclude="${app_name}/apps/web/dist" \
+    --exclude="${app_name}/apps/api/dist" \
+    -czf "${payload_dir}/app.tar.gz" "${app_name}"
+
+  if [[ -d "${WEB_ROOT}" ]]; then
+    tar -C "$(dirname "${WEB_ROOT}")" -czf "${payload_dir}/web-root.tar.gz" "$(basename "${WEB_ROOT}")"
+  fi
+
+  if has_nginx_conf; then
+    cp -f "${NGINX_CONF}" "${payload_dir}/nginx.conf"
+  fi
+
+  if [[ -f /root/.pm2/dump.pm2 ]]; then
+    cp -f /root/.pm2/dump.pm2 "${payload_dir}/pm2-dump.pm2"
+  fi
+
+  tar -C "${tmp_dir}" -czf "${backup_file}" payload
+  rm -rf "${tmp_dir}"
+
+  success "备份已生成: ${backup_file}"
 }
-NGINXEOF
-fi
 
-ln -sfn "${NGINX_AVAIL}" "${NGINX_ENABLED}"
-rm -f /etc/nginx/sites-enabled/default
+choose_backup_file() {
+  mkdir -p "${BACKUP_ROOT}"
+  mapfile -t BACKUP_FILES < <(find "${BACKUP_ROOT}" -maxdepth 1 -type f -name 'yk-backup-*.tar.gz' | sort -r)
 
-nginx -t
-systemctl enable nginx -q
-systemctl reload nginx
-success "Nginx 配置已应用"
+  if [[ ${#BACKUP_FILES[@]} -eq 0 ]]; then
+    error "未找到备份文件: ${BACKUP_ROOT}"
+    return 1
+  fi
 
-# ═════════════════════════════════════════════════════════════
-step "7 / 7  启动后端 API (PM2)"
-# ═════════════════════════════════════════════════════════════
+  echo ""
+  echo "可用备份:"
+  local i=1
+  for file in "${BACKUP_FILES[@]}"; do
+    echo "  ${i}. ${file}"
+    ((i++))
+  done
 
-# 安装 PM2
-if ! command -v pm2 &>/dev/null; then
-  info "安装 PM2 ..."
-  npm install -g pm2 --silent
-fi
+  local choice
+  read -r -p "请输入要还原的备份编号: " choice
 
-cd "${APP_DIR}"
-info "构建后端 API ..."
-pnpm --filter api build 2>/dev/null || warn "API 构建跳过（可能无需编译）"
+  if [[ ! "${choice}" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#BACKUP_FILES[@]} )); then
+    error "无效编号"
+    return 1
+  fi
 
-PM2_APP="yakewangye-api"
-if pm2 describe "${PM2_APP}" &>/dev/null; then
-  info "重启 API 进程 ..."
-  pm2 restart "${PM2_APP}" --update-env
-else
-  info "首次启动 API 进程 ..."
-  pm2 start "${APP_DIR}/apps/api/dist/main.js" \
-    --name "${PM2_APP}" \
-    --cwd "${APP_DIR}" \
-    --env production \
-    -- 2>/dev/null || \
-  pm2 start "${APP_DIR}/apps/api/src/main.ts" \
-    --name "${PM2_APP}" \
-    --interpreter "node" \
-    --interpreter-args "--loader ts-node/esm" \
-    --cwd "${APP_DIR}"
-fi
+  SELECTED_BACKUP_FILE="${BACKUP_FILES[$((choice - 1))]}"
+  return 0
+}
 
-pm2 save --force >/dev/null
-pm2 startup systemd -u root --hp /root >/dev/null 2>&1 || true
-success "API 进程已启动"
+restore_backup() {
+  step "还原备份"
 
-# ═════════════════════════════════════════════════════════════
-echo ""
-echo -e "${GREEN}${BOLD}╔══════════════════════════════════════════════╗${RESET}"
-echo -e "${GREEN}${BOLD}║         ✅  部署完成！                        ║${RESET}"
-echo -e "${GREEN}${BOLD}╚══════════════════════════════════════════════╝${RESET}"
-echo ""
-if [[ "${CERT_OK}" == "true" ]]; then
-  echo -e "  🌐  https://${DOMAIN_PRIMARY}"
-  echo -e "  🌐  https://${DOMAIN_SECONDARY}"
-else
-  echo -e "  🌐  http://${DOMAIN_PRIMARY}  ${YELLOW}(HTTP 模式，建议配置证书)${RESET}"
-fi
-echo -e "  📁  网站目录: ${WEB_ROOT}"
-echo -e "  📁  项目目录: ${APP_DIR}"
-echo -e "  🔑  证书目录: ${CERT_DIR}"
-echo -e "  🔧  API 端口: ${API_PORT}"
-echo ""
-echo -e "  下次更新只需运行: ${BOLD}yk${RESET}"
-echo ""
+  choose_backup_file || return 1
+
+  warn "即将还原备份: ${SELECTED_BACKUP_FILE}"
+  warn "还原前会先自动再备份一次当前状态"
+
+  ask_yes_no "确认继续还原？" || return 0
+
+  create_backup
+
+  local had_pm2=false had_docker=false had_nginx=false
+  pm2_app_exists && had_pm2=true
+  docker_services_running && had_docker=true
+  nginx_active && had_nginx=true
+
+  if [[ "${had_pm2}" == "true" ]]; then
+    pm2 stop "${PM2_APP}" >/dev/null 2>&1 || true
+  fi
+
+  if [[ "${had_docker}" == "true" ]]; then
+    (cd "${APP_DIR}" && docker compose stop postgres redis metabase) || true
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/yk-restore.XXXXXX)"
+  tar -xzf "${SELECTED_BACKUP_FILE}" -C "${tmp_dir}"
+
+  if [[ -f "${tmp_dir}/payload/app.tar.gz" ]]; then
+    mkdir -p "${tmp_dir}/app"
+    tar -xzf "${tmp_dir}/payload/app.tar.gz" -C "${tmp_dir}/app"
+    mkdir -p "${APP_DIR}"
+    rsync -a --delete "${tmp_dir}/app/$(basename "${APP_DIR}")/" "${APP_DIR}/"
+  fi
+
+  if [[ -f "${tmp_dir}/payload/web-root.tar.gz" ]]; then
+    mkdir -p "${tmp_dir}/web"
+    tar -xzf "${tmp_dir}/payload/web-root.tar.gz" -C "${tmp_dir}/web"
+    mkdir -p "${WEB_ROOT}"
+    rsync -a --delete "${tmp_dir}/web/$(basename "${WEB_ROOT}")/" "${WEB_ROOT}/"
+  fi
+
+  if [[ -f "${tmp_dir}/payload/nginx.conf" ]]; then
+    cp -f "${tmp_dir}/payload/nginx.conf" "${NGINX_CONF}"
+  fi
+
+  if [[ -f "${tmp_dir}/payload/pm2-dump.pm2" && -d /root/.pm2 ]]; then
+    cp -f "${tmp_dir}/payload/pm2-dump.pm2" /root/.pm2/dump.pm2
+  fi
+
+  rm -rf "${tmp_dir}"
+
+  if [[ "${had_docker}" == "true" ]] && docker_compose_available; then
+    (cd "${APP_DIR}" && docker compose up -d postgres redis metabase) || true
+  fi
+
+  if nginx_installed && has_nginx_conf; then
+    nginx -t
+    if [[ "${had_nginx}" == "true" ]]; then
+      systemctl reload nginx
+    fi
+  fi
+
+  if has_pm2; then
+    if pm2_app_exists; then
+      pm2 restart "${PM2_APP}" --update-env || true
+    elif [[ -f "${APP_DIR}/apps/api/dist/main.js" ]]; then
+      pm2 start "${APP_DIR}/apps/api/dist/main.js" --name "${PM2_APP}" --cwd "${APP_DIR}" || true
+    fi
+    pm2 save --force >/dev/null 2>&1 || true
+  fi
+
+  success "备份还原完成"
+}
+
+show_menu() {
+  clear || true
+  echo -e "${BOLD}yk 运维菜单${RESET}"
+  echo ""
+  echo "1. 检查环境 / PM2 / nginx / 仓库状态"
+  echo "2. 安全更新代码并按检测结果重启服务"
+  echo "3. 创建打包备份"
+  echo "4. 从备份还原"
+  echo "0. 退出"
+  echo ""
+}
+
+main() {
+  require_root
+  install_self
+
+  while true; do
+    show_menu
+    local choice=""
+    read -r -p "请输入功能编号: " choice
+
+    case "${choice}" in
+      1)
+        show_status
+        pause
+        ;;
+      2)
+        safe_update_code
+        pause
+        ;;
+      3)
+        create_backup
+        pause
+        ;;
+      4)
+        restore_backup
+        pause
+        ;;
+      0)
+        exit 0
+        ;;
+      *)
+        warn "无效选项，请重新输入"
+        pause
+        ;;
+    esac
+  done
+}
+
+main "$@"

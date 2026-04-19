@@ -139,45 +139,45 @@ infra/                 预留基础设施配置
 
 ### 一键部署脚本 `yk.sh`
 
-项目根目录提供 `yk.sh`，支持新服务器首次部署和已部署服务器的代码更新，全程无需手动操作。
+项目根目录提供 `yk.sh`，安装后会变成全局命令 `yk`。当前版本已经改成“菜单式运维脚本”，重点是避免无脑重复部署。
 
-**首次部署（新服务器）**
+**运行方式**
 
 ```bash
-# 方式一：直接从 GitHub 拉取运行
-curl -fsSL https://raw.githubusercontent.com/AYAYAnotYAYAY/yakewangye/main/yk.sh | sudo bash
-
-# 方式二：clone 后运行
 sudo bash yk.sh
-```
-
-**日常更新**
-
-脚本首次运行后会自动安装为全局命令，之后任意目录执行：
-
-```bash
 yk
 ```
 
-**脚本执行流程（7步）**
+**当前菜单功能**
 
-1. 检查并自动安装 `git` / `nginx` / `Node.js 18+` / `pnpm`
-2. 首次 `git clone`，已有仓库则 `git pull` 拉最新 `main`
-3. 检查 `/root/ygkkkca/cert.crt` 和 `/root/ygkkkca/private.key`
-   - 存在 → 直接使用，走 HTTPS 模式
-   - 不存在 → 询问是否自动申请 Let's Encrypt 证书；申请后自动复制到该目录并注册续期 hook
-   - 拒绝申请 → 以 HTTP 模式继续部署
-4. `pnpm install` + `pnpm --filter web build` 构建前端
-5. `rsync` 同步产物到 `/var/www/yakewangye`
-6. 写入 nginx 配置（HTTPS 含 HTTP→HTTPS 跳转 + API 反代 + 静态资源缓存；HTTP 模式简化版）
-7. PM2 启动/重启后端 API，配置开机自启
+1. 检查环境、仓库、PM2、nginx、docker compose 状态
+2. 安全更新代码
+   - 只做 `git fetch` + `git pull --ff-only`
+   - 本地工作区有改动时拒绝继续
+   - 不会执行 `git reset --hard`
+   - 不会主动重装 nginx / pm2 / 证书
+   - 不会删除 `data`、`uploads`、`postgres-data` 等本地数据目录
+3. 创建打包备份
+4. 从备份还原
 
-**证书目录约定**
+**安全更新行为**
 
-| 文件 | 路径 |
-|------|------|
-| 证书 | `/root/ygkkkca/cert.crt` |
-| 私钥 | `/root/ygkkkca/private.key` |
+- 拉取最新代码后执行 `pnpm install` 和 `pnpm run build`
+- 如果检测到前端产物，则同步到 `/var/www/yakewangye`
+- 只有检测到已有 PM2 进程时才会重启 API
+- 只有检测到已有 nginx 配置和运行中的 nginx 时才会执行 reload
+- 如果 PM2 或 nginx 不存在，只提示，不强行部署
+
+**备份与还原**
+
+- 备份默认输出到 `/opt/yk-backups`
+- 备份内容包括：
+  - 项目目录（排除 `.git`、`node_modules`、构建缓存）
+  - 前端静态目录
+  - nginx 配置
+  - PM2 dump 文件（如果存在）
+- 还原前会先自动再备份一次当前状态
+- 如果检测到 docker compose 里的 `postgres/redis/metabase` 正在运行，还原时会先停再起
 
 **部署产物位置**
 

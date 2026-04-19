@@ -59,6 +59,12 @@
     "visitorId": "lead-visitor",
     "startedAt": "2026-04-19T09:36:03.689Z",
     "updatedAt": "2026-04-19T09:36:03.690Z",
+    "triage": {
+      "intent": "pricing",
+      "urgent": false,
+      "recommendedAction": "collect_lead",
+      "suggestedNextStep": "可以继续收集缺牙情况、是否拍片、想做哪类治疗，再引导进入 Telegram。"
+    },
     "messages": [
       {
         "id": "user-e21945cb-348f-46e3-ae89-a93cefe1205b",
@@ -72,12 +78,33 @@
         "content": "我先帮你做初步分诊。请告诉我你的主要问题、持续多久了、是否疼痛或出血、是否已经拍过片，我再给你下一步建议。\n\n当前判断：可继续初步问诊。可以继续收集缺牙情况、是否拍片、想做哪类治疗，再引导进入 Telegram。",
         "createdAt": "2026-04-19T09:36:03.690Z"
       }
+    ]
+  },
+  {
+    "sessionId": "quanyu-chat-session-1776590715507-e3ya36",
+    "language": "zh",
+    "visitorId": "quanyu-chat-visitor-1776590715507-5mjjoc",
+    "startedAt": "2026-04-19T12:55:48.389Z",
+    "updatedAt": "2026-04-19T12:55:48.399Z",
+    "messages": [
+      {
+        "id": "user-cab8c98e-23d9-49eb-91b4-c0064a29c5d1",
+        "role": "user",
+        "content": "000",
+        "createdAt": "2026-04-19T12:55:48.394Z"
+      },
+      {
+        "id": "assistant-32330769-bc93-49e3-bccf-a75eaa3c50cc",
+        "role": "assistant",
+        "content": "我先帮你做初步分诊。请告诉我你的主要问题、持续多久了、是否疼痛或出血、是否已经拍过片，我再给你下一步建议。\n\n当前判断：可继续初步问诊。继续收集症状、持续时间、既往治疗和是否已有影像资料。",
+        "createdAt": "2026-04-19T12:55:48.397Z"
+      }
     ],
     "triage": {
-      "intent": "pricing",
+      "intent": "consultation",
       "urgent": false,
-      "recommendedAction": "collect_lead",
-      "suggestedNextStep": "可以继续收集缺牙情况、是否拍片、想做哪类治疗，再引导进入 Telegram。"
+      "recommendedAction": "continue_ai_consultation",
+      "suggestedNextStep": "继续收集症状、持续时间、既往治疗和是否已有影像资料。"
     }
   }
 ]

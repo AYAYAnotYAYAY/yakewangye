@@ -8,31 +8,13 @@ export function HeroSection({ section }: HeroProps) {
   return (
     <section>
       <div className="container">
-        <div
-          className="card"
-          style={{
-            padding: 28,
-            display: "grid",
-            gridTemplateColumns: "1.1fr 0.9fr",
-            gap: 18,
-            overflow: "hidden",
-          }}
-        >
-          <div>
+        <div className="card hero-card">
+          {/* Left column */}
+          <div className="hero-left">
             <span className="eyebrow">{section.eyebrow}</span>
-            <h1
-              style={{
-                fontSize: "clamp(34px, 5vw, 58px)",
-                lineHeight: 1.05,
-                margin: "18px 0 16px",
-              }}
-            >
-              {section.title}
-            </h1>
-            <p style={{ fontSize: 18, color: "var(--muted)", lineHeight: 1.7 }}>
-              {section.description}
-            </p>
-            <div style={{ display: "flex", gap: 12, marginTop: 22, flexWrap: "wrap" }}>
+            <h1 className="hero-title">{section.title}</h1>
+            <p className="hero-desc">{section.description}</p>
+            <div className="hero-actions">
               {section.actions.map((action) => (
                 <a
                   key={action.label}
@@ -43,45 +25,25 @@ export function HeroSection({ section }: HeroProps) {
                 </a>
               ))}
             </div>
-            <div className="grid-3" style={{ marginTop: 22 }}>
+            <div className="hero-highlights">
               {section.highlights.map((item) => (
-                <div key={item.label} className="card" style={{ padding: 16, boxShadow: "none" }}>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{item.label}</div>
-                  <div style={{ marginTop: 6, fontSize: 24, fontWeight: 800 }}>{item.value}</div>
+                <div key={item.label} className="card hero-highlight-card">
+                  <div className="hero-highlight-label">{item.label}</div>
+                  <div className="hero-highlight-value">{item.value}</div>
                 </div>
               ))}
             </div>
           </div>
-          <div
-            style={{
-              borderRadius: 18,
-              background:
-                "linear-gradient(155deg, rgba(11,92,255,0.98), rgba(20,194,163,0.92))",
-              padding: 24,
-              color: "#fff",
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "space-between",
-              minHeight: 420,
-            }}
-          >
+
+          {/* Right column – AI panel */}
+          <div className="hero-ai-panel">
             <div>
-              <div style={{ fontWeight: 800, fontSize: 24 }}>{section.aiPanel.title}</div>
-              <p style={{ lineHeight: 1.7, color: "rgba(255,255,255,0.88)" }}>
-                {section.aiPanel.description}
-              </p>
+              <div className="hero-ai-title">{section.aiPanel.title}</div>
+              <p className="hero-ai-desc">{section.aiPanel.description}</p>
             </div>
-            <div style={{ display: "grid", gap: 12 }}>
+            <div className="hero-ai-steps">
               {section.aiPanel.steps.map((step) => (
-                <div
-                  key={step}
-                  style={{
-                    background: "rgba(255,255,255,0.12)",
-                    border: "1px solid rgba(255,255,255,0.24)",
-                    borderRadius: 16,
-                    padding: 14,
-                  }}
-                >
+                <div key={step} className="hero-ai-step">
                   {step}
                 </div>
               ))}
