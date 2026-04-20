@@ -163,12 +163,18 @@ yk
 **安全更新行为**
 
 - 拉取最新代码后执行 `pnpm install` 和 `pnpm run build`
+- 如果机器没有全局 `pnpm`，`yk.sh` 应该退回到 `corepack pnpm`
 - 即使代码已是最新，只要 PM2 进程、API 编译产物或前端静态目录缺失，脚本也会继续执行修复流程
 - 如果检测到前端产物，则同步到 `/var/www/yakewangye`
 - PM2 会校验当前启动脚本；如果检测到旧的 `ts-node/src/main.ts` 方式，会自动删除并改为真实的 `dist/**/main.js` 编译产物
 - 如果检测到 nginx 的 `/api` 反代使用了错误的 `proxy_pass .../;` 尾部斜杠，也会自动修正
 - 只有检测到已有 nginx 配置和运行中的 nginx 时才会执行 reload
 - 如果 PM2 或 nginx 不存在，只提示，不强行部署
+- 生产环境必须满足下面两种部署方式之一：
+  - nginx 同域反代 `/api` 和 `/uploads` 到 `127.0.0.1:4000`
+  - 或者在前端构建前显式设置 `VITE_API_BASE_URL=https://api.example.com`
+- `VITE_API_BASE_URL` 是前端构建时变量，构建后的静态文件不会在服务器启动时重新读取 `.env`
+- API 的 JSON 数据、管理员配置和上传目录必须解析到项目根目录下的 `data/` 与 `apps/api/uploads/`，不能依赖 `process.cwd() -> ../../` 这种脆弱推导
 
 **备份与还原**
 

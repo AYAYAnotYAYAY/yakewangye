@@ -33,6 +33,14 @@ corepack pnpm run dev
 - API：`http://localhost:4000/health`
 - Metabase：`http://localhost:3001`
 
+## 生产部署注意事项
+
+- 前端静态站点在生产环境有两种合法接法：
+  - 同域部署：nginx 把 `/api` 和 `/uploads` 反代到 API 服务，例如 `http://127.0.0.1:4000`
+  - 异域部署：在执行 `pnpm run build` 之前设置 `VITE_API_BASE_URL=https://你的-api-域名`
+- `VITE_API_BASE_URL` 是 Vite 构建时变量。静态文件已经构建完成后，再去服务器上修改 `.env` 不会自动改变前端请求地址。
+- 根目录的 `deploy.sh` 只适合“静态文件 + 已存在 API 服务”的场景；如果你需要一并校正 PM2 / nginx / API 编译产物，应该使用 `yk.sh`。
+
 ## 目录
 
 ```text

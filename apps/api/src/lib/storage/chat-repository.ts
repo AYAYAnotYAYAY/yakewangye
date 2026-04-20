@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chatSessionSchema, type ChatMessageRecord, type ChatSession, type TriageResult } from "@quanyu/shared";
+import { resolveProjectRoot } from "../project-paths";
 
 export type ChatRepository = {
   list: () => Promise<ChatSession[]>;
@@ -10,7 +11,7 @@ export type ChatRepository = {
 };
 
 function createJsonChatRepository(): ChatRepository {
-  const repoRoot = process.env.INIT_CWD ? path.resolve(process.env.INIT_CWD) : path.resolve(process.cwd(), "..", "..");
+  const repoRoot = resolveProjectRoot();
   const sessionsFilePath = path.resolve(repoRoot, "data/chat-sessions.json");
 
   async function ensureSessionsFile() {

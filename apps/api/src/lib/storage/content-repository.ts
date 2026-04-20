@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { cmsContentSchema, cmsContentSeed, type CmsContent } from "@quanyu/shared";
+import { resolveProjectRoot } from "../project-paths";
 
 export type ContentRepository = {
   read: () => Promise<CmsContent>;
@@ -9,7 +10,7 @@ export type ContentRepository = {
 };
 
 function createJsonContentRepository(): ContentRepository {
-  const repoRoot = process.env.INIT_CWD ? path.resolve(process.env.INIT_CWD) : path.resolve(process.cwd(), "..", "..");
+  const repoRoot = resolveProjectRoot();
   const contentFilePath = path.resolve(repoRoot, "data/content.json");
 
   async function ensureContentFile() {

@@ -1,7 +1,8 @@
 import type { ChatSession, CmsContent } from "@quanyu/shared";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "";
+const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 export const ADMIN_TOKEN_STORAGE_KEY = "quanyu_admin_token";
+let runtimeApiBaseUrl: string | undefined = API_BASE_URL || undefined;
 
 export type AdminStatus =
   | {
@@ -18,36 +19,69 @@ function unique(values: string[]) {
   return [...new Set(values)];
 }
 
-function getApiBaseCandidates() {
-  if (typeof window === "undefined") {
-    return [API_BASE_URL];
+function normalizeApiBaseUrl(value: string | undefined) {
+  const trimmed = value?.trim() ?? "";
+
+  if (!trimmed || trimmed === "/") {
+    return "";
   }
 
-  const { protocol, hostname, port } = window.location;
-  const sameOrigin = API_BASE_URL;
-  const host4000 =
-    protocol === "http:" && hostname && port !== "4000"
-      ? `${protocol}//${hostname}:4000`
-      : "";
+  return trimmed.replace(/\/+$/, "");
+}
 
-  return unique([sameOrigin, host4000].filter(Boolean));
+function buildRequestUrl(base: string, input: string) {
+  return base ? `${base}${input}` : input;
+}
+
+function getApiBaseCandidates() {
+  const candidates: string[] = [];
+
+  if (runtimeApiBaseUrl !== undefined) {
+    candidates.push(runtimeApiBaseUrl);
+  }
+
+  if (API_BASE_URL) {
+    candidates.push(API_BASE_URL);
+  }
+
+  if (typeof window !== "undefined") {
+    const { protocol, hostname, port } = window.location;
+    const host4000 =
+      protocol === "http:" && hostname && port !== "4000"
+        ? `${protocol}//${hostname}:4000`
+        : "";
+
+    if (host4000) {
+      candidates.push(host4000);
+    }
+  }
+
+  candidates.push("");
+  return unique(candidates);
 }
 
 async function fetchWithFallback(input: string, init?: RequestInit) {
   let lastError: unknown;
+  const attemptedUrls: string[] = [];
 
   for (const base of getApiBaseCandidates()) {
+    const requestUrl = buildRequestUrl(base, input);
+    attemptedUrls.push(requestUrl);
+
     try {
-      return await fetch(`${base}${input}`, {
+      const response = await fetch(requestUrl, {
         ...init,
         cache: "no-store",
       });
+
+      runtimeApiBaseUrl = base;
+      return response;
     } catch (error) {
       lastError = error;
     }
   }
 
-  throw lastError ?? new Error(`Failed to fetch: ${input}`);
+  throw lastError ?? new Error(`Failed to fetch: ${attemptedUrls.join(", ")}`);
 }
 
 export function resolveAssetUrl(value: string) {
@@ -60,7 +94,7 @@ export function resolveAssetUrl(value: string) {
   }
 
   if (value.startsWith("/")) {
-    return `${API_BASE_URL}${value}`;
+    return buildRequestUrl(runtimeApiBaseUrl ?? API_BASE_URL, value);
   }
 
   return value;

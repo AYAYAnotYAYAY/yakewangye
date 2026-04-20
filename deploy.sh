@@ -3,7 +3,8 @@ set -euo pipefail
 # One-click deploy script for Quanyu Dental static website
 # Supports:
 # - Nginx install/config
-# - Website publish to /var/www
+# - Build and publish apps/web/dist to /var/www
+# - Reverse proxy /api and /uploads to the API service
 # - Let's Encrypt HTTPS certificate issuance
 # - Auto-renew setup
 
@@ -11,8 +12,10 @@ PRIMARY_DOMAIN="proclinicheihe.ru"
 SECONDARY_DOMAIN="prodentalheihe.ru"
 SITE_DIR="/var/www/quanyu-dental"
 SITE_NAME="quanyu-dental"
+API_UPSTREAM="http://127.0.0.1:4000"
 EMAIL=""
 SOURCE_DIR="$(pwd)"
+WEB_DIST_RELATIVE="apps/web/dist"
 OS_FAMILY=""
 
 print_usage() {
@@ -75,13 +78,30 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y nginx certbot python3-certbot-
 echo "==> Preparing web directory: ${SITE_DIR}"
 mkdir -p "${SITE_DIR}"
 
-echo "==> Syncing website files..."
-rsync -av --delete \
-  --exclude ".git" \
-  --exclude ".github" \
-  --exclude "node_modules" \
-  --exclude ".DS_Store" \
-  "${SOURCE_DIR}/" "${SITE_DIR}/"
+if [[ -f "${SOURCE_DIR}/package.json" && -f "${SOURCE_DIR}/pnpm-workspace.yaml" ]]; then
+  if ! command -v corepack >/dev/null 2>&1; then
+    echo "ERROR: corepack is required to build this monorepo before deploy"
+    exit 1
+  fi
+
+  echo "==> Installing dependencies and building apps/web ..."
+  (
+    cd "${SOURCE_DIR}"
+    corepack pnpm install --frozen-lockfile
+    corepack pnpm run build
+  )
+fi
+
+WEB_DIST_DIR="${SOURCE_DIR}/${WEB_DIST_RELATIVE}"
+
+if [[ ! -d "${WEB_DIST_DIR}" ]]; then
+  echo "ERROR: web dist not found: ${WEB_DIST_DIR}"
+  echo "Run build first, or point --source-dir at the repository root."
+  exit 1
+fi
+
+echo "==> Syncing built frontend files..."
+rsync -av --delete "${WEB_DIST_DIR}/" "${SITE_DIR}/"
 
 chown -R www-data:www-data "${SITE_DIR}"
 
@@ -98,6 +118,24 @@ server {
 
     location / {
         try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass ${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /uploads/ {
+        proxy_pass ${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
     location = /robots.txt {
@@ -157,4 +195,3 @@ echo "Website dir: ${SITE_DIR}"
 echo "Domains: https://${PRIMARY_DOMAIN}  https://${SECONDARY_DOMAIN}"
 echo "Nginx conf: ${NGINX_CONF}"
 echo "Renewal: certbot.timer + cron fallback configured"
-]]>

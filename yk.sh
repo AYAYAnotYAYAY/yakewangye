@@ -63,6 +63,33 @@ has_pm2() {
   command -v pm2 >/dev/null 2>&1
 }
 
+has_pnpm_runner() {
+  command -v pnpm >/dev/null 2>&1 || command -v corepack >/dev/null 2>&1
+}
+
+pnpm_version() {
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm -v
+    return 0
+  fi
+
+  if command -v corepack >/dev/null 2>&1; then
+    corepack pnpm -v
+    return 0
+  fi
+
+  return 1
+}
+
+run_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    pnpm "$@"
+    return 0
+  fi
+
+  corepack pnpm "$@"
+}
+
 pm2_app_exists() {
   has_pm2 && pm2 describe "${PM2_APP}" >/dev/null 2>&1
 }
@@ -222,10 +249,10 @@ show_status() {
     warn "Node.js 未安装"
   fi
 
-  if command -v pnpm >/dev/null 2>&1; then
-    success "pnpm: $(pnpm -v)"
+  if has_pnpm_runner; then
+    success "pnpm: $(pnpm_version)"
   else
-    warn "pnpm 未安装"
+    warn "pnpm/corepack 未安装"
   fi
 
   if has_repo; then
@@ -320,8 +347,8 @@ safe_update_code() {
     git -C "${APP_DIR}" pull --ff-only origin "${REPO_BRANCH}"
   fi
 
-  if ! command -v pnpm >/dev/null 2>&1; then
-    error "pnpm 未安装，无法继续构建"
+  if ! has_pnpm_runner; then
+    error "pnpm/corepack 未安装，无法继续构建"
     return 1
   fi
 
@@ -333,10 +360,10 @@ safe_update_code() {
   fi
 
   info "安装依赖 ..."
-  pnpm install --frozen-lockfile
+  run_pnpm install --frozen-lockfile
 
   info "执行构建 ..."
-  pnpm run build
+  run_pnpm run build
 
   if [[ -d "${APP_DIR}/apps/web/dist" ]]; then
     mkdir -p "${WEB_ROOT}"

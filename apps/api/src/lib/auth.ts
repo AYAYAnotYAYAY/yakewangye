@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { resolveProjectRoot } from "./project-paths";
 
 const adminLoginSchema = z.object({
   username: z.string().min(1),
@@ -38,7 +39,7 @@ type AdminCredentialSource =
       source: "setup_required";
     };
 
-const repoRoot = process.env.INIT_CWD ? path.resolve(process.env.INIT_CWD) : path.resolve(process.cwd(), "..", "..");
+const repoRoot = resolveProjectRoot();
 const adminConfigFilePath = path.resolve(repoRoot, "data/admin-config.json");
 
 function getAdminUsernameFromEnv() {
