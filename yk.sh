@@ -11,6 +11,8 @@ PM2_APP="yakewangye-api"
 SCRIPT_INSTALL_PATH="/usr/local/bin/yk"
 BACKUP_ROOT="/opt/yk-backups"
 DEFAULT_API_PORT="4000"
+BUILD_SWAP_FILE="/swapfile.yk"
+BUILD_SWAP_SIZE_MB="1024"
 
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -224,6 +226,52 @@ get_vite_api_base_url() {
   env_file="$(app_env_file)"
   value="$(read_env_value "${env_file}" "VITE_API_BASE_URL" 2>/dev/null || true)"
   printf '%s' "${value}"
+}
+
+get_mem_available_mb() {
+  awk '/MemAvailable:/ { printf "%d", $2 / 1024 }' /proc/meminfo
+}
+
+get_swap_total_mb() {
+  awk '/SwapTotal:/ { printf "%d", $2 / 1024 }' /proc/meminfo
+}
+
+swap_active_for_file() {
+  local file="${1}"
+  swapon --show=NAME --noheadings 2>/dev/null | grep -Fxq "${file}"
+}
+
+ensure_build_swap() {
+  local mem_available_mb swap_total_mb
+  mem_available_mb="$(get_mem_available_mb)"
+  swap_total_mb="$(get_swap_total_mb)"
+
+  if (( mem_available_mb >= 700 || swap_total_mb >= 512 )); then
+    return 0
+  fi
+
+  warn "检测到当前可用内存约 ${mem_available_mb}MB，Swap 总量约 ${swap_total_mb}MB，构建可能被 OOM killer 杀掉"
+
+  if swap_active_for_file "${BUILD_SWAP_FILE}"; then
+    success "构建保护 swap 已存在: ${BUILD_SWAP_FILE}"
+    return 0
+  fi
+
+  if ! ask_yes_no "是否创建 ${BUILD_SWAP_SIZE_MB}MB 的构建保护 swap 文件 ${BUILD_SWAP_FILE}？"; then
+    warn "已跳过 swap 创建，构建仍可能因内存不足失败"
+    return 0
+  fi
+
+  if command_exists fallocate; then
+    fallocate -l "${BUILD_SWAP_SIZE_MB}M" "${BUILD_SWAP_FILE}"
+  else
+    dd if=/dev/zero of="${BUILD_SWAP_FILE}" bs=1M count="${BUILD_SWAP_SIZE_MB}" status=progress
+  fi
+
+  chmod 600 "${BUILD_SWAP_FILE}"
+  mkswap "${BUILD_SWAP_FILE}" >/dev/null
+  swapon "${BUILD_SWAP_FILE}"
+  success "已启用构建保护 swap: ${BUILD_SWAP_FILE}"
 }
 
 ensure_repo_exists() {
@@ -471,6 +519,7 @@ ensure_node_build_toolchain() {
 build_workspace() {
   ensure_node_build_toolchain || return 1
   cd "${APP_DIR}"
+  ensure_build_swap
   info "安装依赖 ..."
   run_pnpm install --frozen-lockfile
   info "校正被 pnpm 保护策略延后的构建依赖 ..."
