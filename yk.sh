@@ -67,6 +67,57 @@ pm2_app_exists() {
   has_pm2 && pm2 describe "${PM2_APP}" >/dev/null 2>&1
 }
 
+pm2_current_script() {
+  if ! pm2_app_exists; then
+    return 1
+  fi
+
+  pm2 jlist 2>/dev/null | node -e '
+    const fs = require("fs");
+    const input = fs.readFileSync(0, "utf8");
+    const apps = JSON.parse(input || "[]");
+    const target = apps.find((app) => app.name === process.argv[1]);
+    if (target?.pm2_env?.pm_exec_path) {
+      process.stdout.write(String(target.pm2_env.pm_exec_path));
+    }
+  ' "${PM2_APP}"
+}
+
+ensure_pm2_api_process() {
+  local target_script="${APP_DIR}/apps/api/dist/main.js"
+
+  if [[ ! -f "${target_script}" ]]; then
+    warn "未找到 API 编译产物: ${target_script}"
+    return 1
+  fi
+
+  if ! has_pm2; then
+    warn "pm2 未安装，跳过 API 进程管理"
+    return 1
+  fi
+
+  if pm2_app_exists; then
+    local current_script=""
+    current_script="$(pm2_current_script || true)"
+
+    if [[ "${current_script}" == "${target_script}" ]]; then
+      info "检测到 PM2 进程已使用 dist/main.js，执行重启 ..."
+      pm2 restart "${PM2_APP}" --update-env
+    else
+      warn "检测到旧的 PM2 启动命令: ${current_script:-unknown}"
+      warn "将删除旧进程并改为 dist/main.js 启动"
+      pm2 delete "${PM2_APP}" || true
+      pm2 start "${target_script}" --name "${PM2_APP}" --cwd "${APP_DIR}"
+    fi
+  else
+    info "未检测到 PM2 进程，使用 dist/main.js 启动 API ..."
+    pm2 start "${target_script}" --name "${PM2_APP}" --cwd "${APP_DIR}"
+  fi
+
+  pm2 save --force >/dev/null 2>&1 || true
+  success "PM2 API 进程已校正并保存"
+}
+
 nginx_installed() {
   command -v nginx >/dev/null 2>&1
 }
@@ -226,14 +277,7 @@ safe_update_code() {
     warn "未找到前端产物目录，跳过静态文件同步"
   fi
 
-  if pm2_app_exists; then
-    info "检测到 PM2 进程，执行重启 ..."
-    pm2 restart "${PM2_APP}" --update-env
-    pm2 save --force >/dev/null 2>&1 || true
-    success "PM2 进程已重启"
-  else
-    warn "未检测到 PM2 进程 ${PM2_APP}，跳过后端重启"
-  fi
+  ensure_pm2_api_process || true
 
   if nginx_installed && has_nginx_conf; then
     info "检测到 nginx 配置，执行语法检查 ..."
@@ -402,12 +446,7 @@ restore_backup() {
   fi
 
   if has_pm2; then
-    if pm2_app_exists; then
-      pm2 restart "${PM2_APP}" --update-env || true
-    elif [[ -f "${APP_DIR}/apps/api/dist/main.js" ]]; then
-      pm2 start "${APP_DIR}/apps/api/dist/main.js" --name "${PM2_APP}" --cwd "${APP_DIR}" || true
-    fi
-    pm2 save --force >/dev/null 2>&1 || true
+    ensure_pm2_api_process || true
   fi
 
   success "备份还原完成"
