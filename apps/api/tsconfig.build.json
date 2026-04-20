@@ -3,6 +3,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "noEmit": false,
+    "paths": {},
     "module": "NodeNext",
     "moduleResolution": "NodeNext"
   }
