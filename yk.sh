@@ -83,11 +83,36 @@ pm2_current_script() {
   ' "${PM2_APP}"
 }
 
-ensure_pm2_api_process() {
-  local target_script="${APP_DIR}/apps/api/dist/main.js"
+find_api_entrypoint() {
+  local candidates=(
+    "${APP_DIR}/apps/api/dist/main.js"
+    "${APP_DIR}/apps/api/dist/apps/api/src/main.js"
+    "${APP_DIR}/apps/api/dist/src/main.js"
+  )
 
-  if [[ ! -f "${target_script}" ]]; then
-    warn "未找到 API 编译产物: ${target_script}"
+  local candidate=""
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "${candidate}" ]]; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+  done
+
+  candidate="$(find "${APP_DIR}/apps/api/dist" -type f -path '*/main.js' 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${candidate}" ]]; then
+    printf '%s' "${candidate}"
+    return 0
+  fi
+
+  return 1
+}
+
+ensure_pm2_api_process() {
+  local target_script=""
+  target_script="$(find_api_entrypoint || true)"
+
+  if [[ -z "${target_script}" || ! -f "${target_script}" ]]; then
+    warn "未找到 API 编译产物，已检查 apps/api/dist 下常见 main.js 路径"
     return 1
   fi
 

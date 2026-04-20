@@ -164,7 +164,7 @@ yk
 
 - 拉取最新代码后执行 `pnpm install` 和 `pnpm run build`
 - 如果检测到前端产物，则同步到 `/var/www/yakewangye`
-- PM2 会校验当前启动脚本；如果检测到旧的 `ts-node/src/main.ts` 方式，会自动删除并改为 `apps/api/dist/main.js`
+- PM2 会校验当前启动脚本；如果检测到旧的 `ts-node/src/main.ts` 方式，会自动删除并改为真实的 `dist/**/main.js` 编译产物
 - 只有检测到已有 nginx 配置和运行中的 nginx 时才会执行 reload
 - 如果 PM2 或 nginx 不存在，只提示，不强行部署
 
