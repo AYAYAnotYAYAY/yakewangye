@@ -328,11 +328,22 @@ current_server_names() {
   ' "${NGINX_CONF}"
 }
 
+nginx_conf_has_ssl() {
+  [[ -f "${NGINX_CONF}" ]] && grep -Eq 'listen[[:space:]]+443|ssl_certificate' "${NGINX_CONF}"
+}
+
+backup_nginx_conf_if_exists() {
+  if [[ -f "${NGINX_CONF}" ]]; then
+    cp -f "${NGINX_CONF}" "${NGINX_CONF}.bak"
+  fi
+}
+
 write_nginx_conf() {
   local server_names="${1}"
   local api_port="${2}"
 
   mkdir -p "$(dirname "${NGINX_CONF}")"
+  backup_nginx_conf_if_exists
 
   cat > "${NGINX_CONF}" <<EOF
 server {
@@ -409,10 +420,22 @@ ensure_nginx_api_proxy() {
   api_port="$(get_api_port)"
   server_names="$(current_server_names || true)"
 
-  if ! grep -q 'location /api/' "${NGINX_CONF}" || ! grep -q 'location /uploads/' "${NGINX_CONF}" || grep -Eq 'proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):[0-9]+/;' "${NGINX_CONF}"; then
-    warn "检测到 nginx 配置缺少 /api 或 /uploads 代理，或 proxy_pass 写法错误，正在重写为项目标准配置"
-    write_nginx_conf "${server_names:-_}" "${api_port}"
+  if grep -Eq 'proxy_pass[[:space:]]+http://127\.0\.0\.1:[0-9]+/;|proxy_pass[[:space:]]+http://localhost:[0-9]+/;' "${NGINX_CONF}"; then
+    warn "检测到 nginx 的 proxy_pass 带尾部斜杠，正在修正"
+    sed -Ei 's#proxy_pass[[:space:]]+http://127\.0\.0\.1:([0-9]+)/;#proxy_pass http://127.0.0.1:\1;#g; s#proxy_pass[[:space:]]+http://localhost:([0-9]+)/;#proxy_pass http://127.0.0.1:\1;#g' "${NGINX_CONF}"
     changed=true
+  fi
+
+  if ! grep -q 'location /api/' "${NGINX_CONF}" || ! grep -q 'location /uploads/' "${NGINX_CONF}"; then
+    if nginx_conf_has_ssl; then
+      warn "检测到当前 nginx 配置包含 HTTPS/证书配置，但缺少 /api 或 /uploads 代理"
+      warn "为避免覆盖已有 443/证书配置，安全更新不会自动重写整个 nginx 文件"
+      warn "请改用“2. 首次部署 / 修复部署”手工确认域名后重建配置，或手动把 /api 与 /uploads 代理补进现有站点配置"
+    else
+      warn "检测到 nginx 配置缺少 /api 或 /uploads 代理，正在重写为项目标准 HTTP 配置"
+      write_nginx_conf "${server_names:-_}" "${api_port}"
+      changed=true
+    fi
   fi
 
   if [[ "${changed}" == "true" ]]; then
