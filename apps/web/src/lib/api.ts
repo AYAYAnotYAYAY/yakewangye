@@ -26,7 +26,7 @@ function getApiBaseCandidates() {
   const { protocol, hostname, port } = window.location;
   const sameOrigin = API_BASE_URL;
   const host4000 =
-    hostname && port !== "4000" && protocol
+    protocol === "http:" && hostname && port !== "4000"
       ? `${protocol}//${hostname}:4000`
       : "";
 
@@ -67,7 +67,7 @@ export function resolveAssetUrl(value: string) {
 }
 
 export async function fetchContent() {
-  const response = await fetchWithFallback("/api/content");
+  const response = await fetchWithFallback(`/api/content?_=${Date.now()}`);
 
   if (!response.ok) {
     throw new Error("Failed to fetch content");

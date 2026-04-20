@@ -92,6 +92,28 @@ section {
   position: relative;
 }
 
+.runtime-notice-wrap {
+  padding: 18px 0 0;
+}
+
+.runtime-notice-card {
+  padding: 16px 18px;
+  border-left: 4px solid #f2a93b;
+  background: linear-gradient(180deg, rgba(255, 249, 235, 0.96), rgba(255, 255, 255, 0.98));
+}
+
+.runtime-notice-card strong {
+  display: block;
+  font-size: 15px;
+}
+
+.runtime-notice-card p {
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.7;
+  font-size: 14px;
+}
+
 /* ============================================================
    Typography
    ============================================================ */
@@ -1350,6 +1372,14 @@ h1, h2, h3, h4 {
   /* Sections */
   section {
     padding: 40px 0;
+  }
+
+  .runtime-notice-wrap {
+    padding-top: 12px;
+  }
+
+  .runtime-notice-card {
+    padding: 14px;
   }
 
   .section-heading {

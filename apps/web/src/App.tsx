@@ -9,6 +9,8 @@ import { ChatWidget } from "./components/chat-widget";
 import { fetchContent, resolveAssetUrl } from "./lib/api";
 import { AdminPage } from "./pages/admin-page";
 
+const CONTENT_CACHE_KEY = "quanyu_cached_content";
+
 function usePathname() {
   const [pathname, setPathname] = useState(window.location.pathname);
 
@@ -21,6 +23,28 @@ function usePathname() {
   return pathname;
 }
 
+function readCachedContent() {
+  try {
+    const raw = window.localStorage.getItem(CONTENT_CACHE_KEY);
+
+    if (!raw) {
+      return null;
+    }
+
+    return JSON.parse(raw) as CmsContent;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedContent(content: CmsContent) {
+  try {
+    window.localStorage.setItem(CONTENT_CACHE_KEY, JSON.stringify(content));
+  } catch {
+    // ignore cache write errors
+  }
+}
+
 function PageShell(props: { content: CmsContent; children: ReactNode }) {
   return (
     <main id="top">
@@ -29,6 +53,19 @@ function PageShell(props: { content: CmsContent; children: ReactNode }) {
       <Footer settings={props.content.siteSettings} />
       <ChatWidget telegramUrl={props.content.telegramConfig.contactUrl || props.content.siteSettings.primaryContact.telegramUrl} />
     </main>
+  );
+}
+
+function RuntimeNotice(props: { message: string }) {
+  return (
+    <section className="runtime-notice-wrap">
+      <div className="container">
+        <div className="card runtime-notice-card">
+          <strong>当前显示的是兜底内容</strong>
+          <p>{props.message}</p>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -318,20 +355,33 @@ export function App() {
   const pathname = usePathname();
   const [content, setContent] = useState<CmsContent>(cmsContentSeed);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
 
   useEffect(() => {
     let active = true;
+
+    const cached = readCachedContent();
+    if (cached && active) {
+      setContent(cached);
+    }
 
     const run = async () => {
       try {
         const remote = await fetchContent();
         if (active) {
           setContent(remote);
+          writeCachedContent(remote);
+          setWarning("");
         }
       } catch (fetchError) {
         if (active) {
-          setError(String(fetchError));
+          const fallback = cached ?? cmsContentSeed;
+          setContent(fallback);
+          setWarning(
+            cached
+              ? "网络暂时不稳定，页面已切换为最近一次成功读取的内容。你可以稍后下拉刷新再试。"
+              : `网络暂时不稳定，页面已切换为本地兜底内容。原始错误：${String(fetchError)}`,
+          );
         }
       } finally {
         if (active) {
@@ -366,24 +416,10 @@ export function App() {
     );
   }
 
-  if (error && pathname !== "/admin") {
-    return (
-      <PageShell content={content}>
-        <section>
-          <div className="container">
-            <div className="card list-page">
-              <h1>内容读取失败</h1>
-              <p>{error}</p>
-            </div>
-          </div>
-        </section>
-      </PageShell>
-    );
-  }
-
   // 所有内容都在首页单页滚动展示，不再跳转子页面
   return (
     <PageShell content={content}>
+      {warning ? <RuntimeNotice message={warning} /> : null}
       {content.homePage.sections.map((section) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
