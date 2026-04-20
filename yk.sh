@@ -547,19 +547,41 @@ sync_web_dist() {
 check_url() {
   local label="${1}"
   local url="${2}"
+  local attempts="${3:-1}"
+  local sleep_seconds="${4:-1}"
+  local i=1
 
   if ! command_exists curl; then
     warn "未检测到 curl，跳过 ${label} 检查"
     return 1
   fi
 
-  if curl --location --insecure --silent --show-error --fail --max-time 10 "${url}" >/dev/null; then
-    success "${label}: ${url}"
-    return 0
-  fi
+  while (( i <= attempts )); do
+    if curl --noproxy '*' --location --insecure --silent --show-error --fail --max-time 10 "${url}" >/dev/null; then
+      success "${label}: ${url}"
+      return 0
+    fi
+
+    if (( i < attempts )); then
+      sleep "${sleep_seconds}"
+    fi
+
+    ((i++))
+  done
 
   warn "${label} 失败: ${url}"
   return 1
+}
+
+show_pm2_debug_info() {
+  if ! has_pm2 || ! pm2_app_exists; then
+    return 0
+  fi
+
+  echo ""
+  warn "附加 PM2 调试信息"
+  pm2 describe "${PM2_APP}" || true
+  pm2 logs "${PM2_APP}" --lines 80 --nostream || true
 }
 
 run_health_checks() {
@@ -569,21 +591,22 @@ run_health_checks() {
   api_port="$(get_api_port)"
   vite_api_base_url="$(get_vite_api_base_url)"
 
-  check_url "本机 API 健康检查" "http://127.0.0.1:${api_port}/health" || failed=true
-  check_url "本机内容接口" "http://127.0.0.1:${api_port}/api/content" || failed=true
+  check_url "本机 API 健康检查" "http://127.0.0.1:${api_port}/health" 15 1 || failed=true
+  check_url "本机内容接口" "http://127.0.0.1:${api_port}/api/content" 5 1 || failed=true
 
   if nginx_active; then
-    check_url "本机前台首页" "http://127.0.0.1/" || failed=true
-    check_url "本机前台内容接口" "http://127.0.0.1/api/content" || failed=true
+    check_url "本机前台首页" "http://127.0.0.1/" 5 1 || failed=true
+    check_url "本机前台内容接口" "http://127.0.0.1/api/content" 5 1 || failed=true
   else
     warn "nginx 未运行，跳过本机前台入口检查"
   fi
 
   if [[ -n "${vite_api_base_url}" ]]; then
-    check_url "前端配置的远程 API" "${vite_api_base_url}/health" || failed=true
+    check_url "前端配置的远程 API" "${vite_api_base_url}/health" 5 1 || failed=true
   fi
 
   if [[ "${failed}" == "true" ]]; then
+    show_pm2_debug_info
     warn "健康检查存在失败项，请结合 PM2 / nginx / .env 配置继续排查"
     return 1
   fi
