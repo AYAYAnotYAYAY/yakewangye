@@ -163,6 +163,7 @@ yk
 **安全更新行为**
 
 - 拉取最新代码后执行 `pnpm install` 和 `pnpm run build`
+- 即使代码已是最新，只要 PM2 进程、API 编译产物或前端静态目录缺失，脚本也会继续执行修复流程
 - 如果检测到前端产物，则同步到 `/var/www/yakewangye`
 - PM2 会校验当前启动脚本；如果检测到旧的 `ts-node/src/main.ts` 方式，会自动删除并改为真实的 `dist/**/main.js` 编译产物
 - 只有检测到已有 nginx 配置和运行中的 nginx 时才会执行 reload

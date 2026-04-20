@@ -253,6 +253,9 @@ safe_update_code() {
 
   ensure_repo_exists || return 1
 
+  local local_sha remote_sha
+  local needs_runtime_repair=false
+
   if [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
     error "检测到本地未提交改动，已停止更新。请先提交、备份或手动处理。"
     return 1
@@ -261,17 +264,35 @@ safe_update_code() {
   info "获取远程最新提交 ..."
   git -C "${APP_DIR}" fetch origin "${REPO_BRANCH}" --prune
 
-  local local_sha remote_sha
   local_sha="$(git -C "${APP_DIR}" rev-parse HEAD)"
   remote_sha="$(git -C "${APP_DIR}" rev-parse "origin/${REPO_BRANCH}")"
 
-  if [[ "${local_sha}" == "${remote_sha}" ]]; then
-    success "代码已是最新，无需更新"
+  if ! pm2_app_exists; then
+    warn "未检测到 PM2 API 进程，尽管代码已最新，仍将继续构建和启动"
+    needs_runtime_repair=true
+  fi
+
+  if [[ ! -d "${WEB_ROOT}" ]]; then
+    warn "未检测到前端静态目录 ${WEB_ROOT}，将继续构建和同步"
+    needs_runtime_repair=true
+  fi
+
+  if ! find_api_entrypoint >/dev/null 2>&1; then
+    warn "未检测到 API 编译产物，将继续构建"
+    needs_runtime_repair=true
+  fi
+
+  if [[ "${local_sha}" == "${remote_sha}" && "${needs_runtime_repair}" == "false" ]]; then
+    success "代码已是最新，且运行产物与进程状态正常，无需更新"
     return 0
   fi
 
-  info "执行 fast-forward 更新 ..."
-  git -C "${APP_DIR}" pull --ff-only origin "${REPO_BRANCH}"
+  if [[ "${local_sha}" == "${remote_sha}" && "${needs_runtime_repair}" == "true" ]]; then
+    info "代码已是最新，但运行环境需要修复，继续执行依赖安装、构建与启动 ..."
+  else
+    info "执行 fast-forward 更新 ..."
+    git -C "${APP_DIR}" pull --ff-only origin "${REPO_BRANCH}"
+  fi
 
   if ! command -v pnpm >/dev/null 2>&1; then
     error "pnpm 未安装，无法继续构建"
