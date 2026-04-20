@@ -13,6 +13,8 @@ BACKUP_ROOT="/opt/yk-backups"
 DEFAULT_API_PORT="4000"
 BUILD_SWAP_FILE="/swapfile.yk"
 BUILD_SWAP_SIZE_MB="1024"
+DEFAULT_SSL_CERT="/root/ygkkkca/cert.crt"
+DEFAULT_SSL_KEY="/root/ygkkkca/private.key"
 
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -332,6 +334,10 @@ nginx_conf_has_ssl() {
   [[ -f "${NGINX_CONF}" ]] && grep -Eq 'listen[[:space:]]+443|ssl_certificate' "${NGINX_CONF}"
 }
 
+custom_ssl_ready() {
+  [[ -f "${DEFAULT_SSL_CERT}" && -f "${DEFAULT_SSL_KEY}" ]]
+}
+
 backup_nginx_conf_if_exists() {
   if [[ -f "${NGINX_CONF}" ]]; then
     cp -f "${NGINX_CONF}" "${NGINX_CONF}.bak"
@@ -344,6 +350,73 @@ write_nginx_conf() {
 
   mkdir -p "$(dirname "${NGINX_CONF}")"
   backup_nginx_conf_if_exists
+
+  if custom_ssl_ready; then
+    cat > "${NGINX_CONF}" <<EOF
+server {
+    listen 80;
+    server_name ${server_names};
+
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${server_names};
+
+    ssl_certificate ${DEFAULT_SSL_CERT};
+    ssl_certificate_key ${DEFAULT_SSL_KEY};
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    root ${WEB_ROOT};
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:${api_port};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:${api_port};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location = /robots.txt {
+        try_files \$uri =404;
+    }
+
+    location = /sitemap.xml {
+        try_files \$uri =404;
+    }
+
+    location = /favicon.svg {
+        try_files \$uri =404;
+    }
+
+    location ~* \.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff2?)$ {
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+        access_log off;
+    }
+}
+EOF
+    return 0
+  fi
 
   cat > "${NGINX_CONF}" <<EOF
 server {
@@ -427,7 +500,11 @@ ensure_nginx_api_proxy() {
   fi
 
   if ! grep -q 'location /api/' "${NGINX_CONF}" || ! grep -q 'location /uploads/' "${NGINX_CONF}"; then
-    if nginx_conf_has_ssl; then
+    if custom_ssl_ready; then
+      warn "检测到默认自定义证书 ${DEFAULT_SSL_CERT} / ${DEFAULT_SSL_KEY}，将重建标准 HTTPS nginx 配置"
+      write_nginx_conf "${server_names:-_}" "${api_port}"
+      changed=true
+    elif nginx_conf_has_ssl; then
       warn "检测到当前 nginx 配置包含 HTTPS/证书配置，但缺少 /api 或 /uploads 代理"
       warn "为避免覆盖已有 443/证书配置，安全更新不会自动重写整个 nginx 文件"
       warn "请改用“2. 首次部署 / 修复部署”手工确认域名后重建配置，或手动把 /api 与 /uploads 代理补进现有站点配置"
@@ -646,6 +723,8 @@ show_status() {
   echo "备份目录: ${BACKUP_ROOT}"
   echo "API 端口: $(get_api_port)"
   echo "VITE_API_BASE_URL: ${VITE_API_BASE_URL:-$(get_vite_api_base_url)}"
+  echo "默认证书: ${DEFAULT_SSL_CERT}"
+  echo "默认私钥: ${DEFAULT_SSL_KEY}"
   echo ""
 
   command_exists git && success "git 已安装" || warn "git 未安装"
@@ -679,6 +758,7 @@ show_status() {
     success "nginx 已安装"
     has_nginx_conf && success "nginx 配置存在: ${NGINX_CONF}" || warn "nginx 配置不存在: ${NGINX_CONF}"
     nginx_active && success "nginx 正在运行" || warn "nginx 未运行"
+    custom_ssl_ready && success "自定义 HTTPS 证书已就绪" || warn "未检测到默认自定义证书"
     [[ -n "$(current_server_names || true)" ]] && echo "server_name: $(current_server_names)"
   else
     warn "nginx 未安装"
@@ -786,6 +866,11 @@ configure_https_certificate() {
   local domains=()
   local certbot_args=()
   local domain=""
+
+  if custom_ssl_ready; then
+    success "已检测到默认自定义证书，跳过 Certbot"
+    return 0
+  fi
 
   if [[ "${server_names}" == "_" ]]; then
     warn "server_name 为 `_`，跳过 HTTPS 证书申请"
