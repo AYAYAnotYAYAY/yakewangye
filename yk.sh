@@ -10,6 +10,7 @@ NGINX_CONF="/etc/nginx/sites-available/${NGINX_CONF_NAME}.conf"
 PM2_APP="yakewangye-api"
 SCRIPT_INSTALL_PATH="/usr/local/bin/yk"
 BACKUP_ROOT="/opt/yk-backups"
+DEFAULT_API_PORT="4000"
 
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -23,6 +24,10 @@ success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 step()    { echo -e "\n${BOLD}━━━ $* ━━━${RESET}"; }
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
 
 require_root() {
   if [[ $EUID -ne 0 ]]; then
@@ -51,6 +56,21 @@ ask_yes_no() {
   [[ "${answer,,}" == "y" ]]
 }
 
+prompt_value() {
+  local prompt="${1}"
+  local default_value="${2:-}"
+  local answer=""
+
+  if [[ -n "${default_value}" ]]; then
+    read -r -p "$(echo -e "${CYAN}${prompt} [默认: ${default_value}] ${RESET}")" answer
+    printf '%s' "${answer:-${default_value}}"
+    return 0
+  fi
+
+  read -r -p "$(echo -e "${CYAN}${prompt} ${RESET}")" answer
+  printf '%s' "${answer}"
+}
+
 has_repo() {
   [[ -d "${APP_DIR}/.git" ]]
 }
@@ -60,20 +80,20 @@ has_nginx_conf() {
 }
 
 has_pm2() {
-  command -v pm2 >/dev/null 2>&1
+  command_exists pm2
 }
 
 has_pnpm_runner() {
-  command -v pnpm >/dev/null 2>&1 || command -v corepack >/dev/null 2>&1
+  command_exists pnpm || command_exists corepack
 }
 
 pnpm_version() {
-  if command -v pnpm >/dev/null 2>&1; then
+  if command_exists pnpm; then
     pnpm -v
     return 0
   fi
 
-  if command -v corepack >/dev/null 2>&1; then
+  if command_exists corepack; then
     corepack pnpm -v
     return 0
   fi
@@ -82,12 +102,276 @@ pnpm_version() {
 }
 
 run_pnpm() {
-  if command -v pnpm >/dev/null 2>&1; then
+  if command_exists pnpm; then
     pnpm "$@"
     return 0
   fi
 
   corepack pnpm "$@"
+}
+
+docker_compose_available() {
+  command_exists docker && [[ -f "${APP_DIR}/docker-compose.yml" ]]
+}
+
+docker_services_running() {
+  docker_compose_available && (cd "${APP_DIR}" && docker compose ps --status running --services 2>/dev/null | grep -q .)
+}
+
+nginx_installed() {
+  command_exists nginx
+}
+
+nginx_active() {
+  command_exists systemctl && systemctl is-active --quiet nginx
+}
+
+ensure_debian_family() {
+  if ! command_exists apt-get; then
+    error "当前脚本仅支持 Debian/Ubuntu 系。"
+    return 1
+  fi
+}
+
+install_apt_packages() {
+  local packages=("$@")
+  if [[ ${#packages[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  ensure_debian_family || return 1
+  info "安装系统依赖: ${packages[*]}"
+  apt-get update -y
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
+}
+
+ensure_basic_system_packages() {
+  local missing=()
+
+  command_exists git || missing+=("git")
+  command_exists curl || missing+=("curl")
+  command_exists rsync || missing+=("rsync")
+  nginx_installed || missing+=("nginx")
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    install_apt_packages "${missing[@]}"
+  else
+    success "基础系统依赖已满足"
+  fi
+}
+
+ensure_pm2_installed() {
+  if has_pm2; then
+    success "pm2 已安装"
+    return 0
+  fi
+
+  if ! command_exists npm; then
+    warn "未检测到 npm，无法自动安装 pm2"
+    return 1
+  fi
+
+  if ask_yes_no "未检测到 pm2，是否执行 npm install -g pm2？"; then
+    npm install -g pm2
+    success "pm2 已安装"
+    return 0
+  fi
+
+  warn "已跳过 pm2 安装"
+  return 1
+}
+
+read_env_value() {
+  local file="${1}"
+  local key="${2}"
+
+  [[ -f "${file}" ]] || return 1
+
+  awk -F= -v key="${key}" '
+    $0 !~ /^[[:space:]]*#/ && $1 == key {
+      sub(/^[^=]*=/, "", $0)
+      print $0
+      exit
+    }
+  ' "${file}" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
+}
+
+app_env_file() {
+  printf '%s' "${APP_DIR}/.env"
+}
+
+load_app_env() {
+  local env_file
+  env_file="$(app_env_file)"
+
+  if [[ -f "${env_file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${env_file}"
+    set +a
+  fi
+}
+
+get_api_port() {
+  local env_file port
+  env_file="$(app_env_file)"
+  port="$(read_env_value "${env_file}" "API_PORT" 2>/dev/null || true)"
+  printf '%s' "${port:-${DEFAULT_API_PORT}}"
+}
+
+get_vite_api_base_url() {
+  local env_file value
+  env_file="$(app_env_file)"
+  value="$(read_env_value "${env_file}" "VITE_API_BASE_URL" 2>/dev/null || true)"
+  printf '%s' "${value}"
+}
+
+ensure_repo_exists() {
+  if has_repo; then
+    return 0
+  fi
+
+  if ! command_exists git; then
+    error "未检测到 git，无法克隆仓库"
+    return 1
+  fi
+
+  warn "未检测到仓库: ${APP_DIR}"
+  if ask_yes_no "是否先克隆仓库到 ${APP_DIR}？"; then
+    mkdir -p "$(dirname "${APP_DIR}")"
+    git clone --branch "${REPO_BRANCH}" --depth=1 "${REPO_URL}" "${APP_DIR}"
+    success "仓库已克隆"
+    return 0
+  fi
+
+  return 1
+}
+
+ensure_env_file() {
+  if [[ -f "${APP_DIR}/.env" ]]; then
+    success ".env 已存在"
+    return 0
+  fi
+
+  if [[ -f "${APP_DIR}/.env.example" ]]; then
+    cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
+    warn "未检测到 .env，已由 .env.example 生成，请马上检查生产配置"
+    return 0
+  fi
+
+  warn "未找到 .env.example，无法自动生成 .env"
+  return 1
+}
+
+current_server_names() {
+  if ! has_nginx_conf; then
+    return 1
+  fi
+
+  awk '
+    $1 == "server_name" {
+      for (i = 2; i <= NF; i++) {
+        gsub(/;$/, "", $i)
+        names = names (names ? " " : "") $i
+      }
+      print names
+      exit
+    }
+  ' "${NGINX_CONF}"
+}
+
+write_nginx_conf() {
+  local server_names="${1}"
+  local api_port="${2}"
+
+  mkdir -p "$(dirname "${NGINX_CONF}")"
+
+  cat > "${NGINX_CONF}" <<EOF
+server {
+    listen 80;
+    server_name ${server_names};
+
+    root ${WEB_ROOT};
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:${api_port};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:${api_port};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    location = /robots.txt {
+        try_files \$uri =404;
+    }
+
+    location = /sitemap.xml {
+        try_files \$uri =404;
+    }
+
+    location = /favicon.svg {
+        try_files \$uri =404;
+    }
+
+    location ~* \.(css|js|jpg|jpeg|png|gif|webp|svg|ico|woff2?)$ {
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+        access_log off;
+    }
+}
+EOF
+}
+
+activate_nginx_site() {
+  mkdir -p /etc/nginx/sites-enabled
+  ln -sfn "${NGINX_CONF}" "/etc/nginx/sites-enabled/${NGINX_CONF_NAME}.conf"
+  rm -f /etc/nginx/sites-enabled/default
+  nginx -t
+  command_exists systemctl && systemctl enable nginx >/dev/null 2>&1 || true
+  if nginx_active; then
+    systemctl reload nginx
+    success "nginx 已重载"
+  else
+    command_exists systemctl && systemctl start nginx >/dev/null 2>&1 || true
+    nginx_active && success "nginx 已启动" || warn "nginx 尚未运行，请手动检查"
+  fi
+}
+
+ensure_nginx_api_proxy() {
+  if ! has_nginx_conf; then
+    return 1
+  fi
+
+  local api_port server_names changed=false
+  api_port="$(get_api_port)"
+  server_names="$(current_server_names || true)"
+
+  if ! grep -q 'location /api/' "${NGINX_CONF}" || ! grep -q 'location /uploads/' "${NGINX_CONF}" || grep -Eq 'proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):[0-9]+/;' "${NGINX_CONF}"; then
+    warn "检测到 nginx 配置缺少 /api 或 /uploads 代理，或 proxy_pass 写法错误，正在重写为项目标准配置"
+    write_nginx_conf "${server_names:-_}" "${api_port}"
+    changed=true
+  fi
+
+  if [[ "${changed}" == "true" ]]; then
+    success "nginx 站点配置已修正"
+  fi
+
+  return 0
 }
 
 pm2_app_exists() {
@@ -135,97 +419,125 @@ find_api_entrypoint() {
 }
 
 ensure_pm2_api_process() {
-  local target_script=""
+  local target_script api_port
   target_script="$(find_api_entrypoint || true)"
+  api_port="$(get_api_port)"
 
   if [[ -z "${target_script}" || ! -f "${target_script}" ]]; then
     warn "未找到 API 编译产物，已检查 apps/api/dist 下常见 main.js 路径"
     return 1
   fi
 
-  if ! has_pm2; then
-    warn "pm2 未安装，跳过 API 进程管理"
-    return 1
-  fi
+  ensure_pm2_installed || return 1
+
+  load_app_env
 
   if pm2_app_exists; then
     local current_script=""
     current_script="$(pm2_current_script || true)"
 
-    if [[ "${current_script}" == "${target_script}" ]]; then
-      info "检测到 PM2 进程已使用 dist/main.js，执行重启 ..."
-      pm2 restart "${PM2_APP}" --update-env
-    else
+    if [[ "${current_script}" != "${target_script}" ]]; then
       warn "检测到旧的 PM2 启动命令: ${current_script:-unknown}"
-      warn "将删除旧进程并改为 dist/main.js 启动"
+      warn "将删除旧进程并改为真实 dist/main.js 启动"
       pm2 delete "${PM2_APP}" || true
-      pm2 start "${target_script}" --name "${PM2_APP}" --cwd "${APP_DIR}"
+      PROJECT_ROOT="${APP_DIR}" NODE_ENV=production API_PORT="${api_port}" pm2 start "${target_script}" --name "${PM2_APP}" --cwd "${APP_DIR}"
+    else
+      info "检测到 PM2 进程已存在，执行带环境变量更新的重启 ..."
+      PROJECT_ROOT="${APP_DIR}" NODE_ENV=production API_PORT="${api_port}" pm2 restart "${PM2_APP}" --update-env
     fi
   else
     info "未检测到 PM2 进程，使用 dist/main.js 启动 API ..."
-    pm2 start "${target_script}" --name "${PM2_APP}" --cwd "${APP_DIR}"
+    PROJECT_ROOT="${APP_DIR}" NODE_ENV=production API_PORT="${api_port}" pm2 start "${target_script}" --name "${PM2_APP}" --cwd "${APP_DIR}"
   fi
 
   pm2 save --force >/dev/null 2>&1 || true
   success "PM2 API 进程已校正并保存"
 }
 
-nginx_installed() {
-  command -v nginx >/dev/null 2>&1
-}
-
-nginx_active() {
-  command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx
-}
-
-ensure_nginx_api_proxy() {
-  if ! has_nginx_conf; then
+ensure_node_build_toolchain() {
+  if ! command_exists node; then
+    error "未检测到 Node.js，无法构建项目。"
     return 1
   fi
 
-  local changed=false
-
-  if grep -q 'proxy_pass[[:space:]]\+http://127\.0\.0\.1:4000/;' "${NGINX_CONF}" 2>/dev/null; then
-    warn "检测到 nginx /api 反代会吞掉 /api 前缀，正在修正 proxy_pass ..."
-    sed -i 's#proxy_pass[[:space:]]\+http://127\.0\.0\.1:4000/;#proxy_pass         http://127.0.0.1:4000;#g' "${NGINX_CONF}"
-    changed=true
-  fi
-
-  if grep -q 'proxy_pass[[:space:]]\+http://localhost:4000/;' "${NGINX_CONF}" 2>/dev/null; then
-    warn "检测到 nginx 使用 localhost 且带尾部斜杠，正在修正 proxy_pass ..."
-    sed -i 's#proxy_pass[[:space:]]\+http://localhost:4000/;#proxy_pass         http://127.0.0.1:4000;#g' "${NGINX_CONF}"
-    changed=true
-  fi
-
-  if [[ "${changed}" == "true" ]]; then
-    success "nginx API 反代配置已修正"
+  if ! has_pnpm_runner; then
+    error "未检测到 pnpm/corepack，无法构建项目。"
+    return 1
   fi
 
   return 0
 }
 
-docker_compose_available() {
-  command -v docker >/dev/null 2>&1 && [[ -f "${APP_DIR}/docker-compose.yml" ]]
+build_workspace() {
+  ensure_node_build_toolchain || return 1
+  cd "${APP_DIR}"
+  info "安装依赖 ..."
+  run_pnpm install --frozen-lockfile
+  info "执行构建 ..."
+  run_pnpm run build
 }
 
-docker_services_running() {
-  docker_compose_available && (cd "${APP_DIR}" && docker compose ps --status running --services 2>/dev/null | grep -q .)
+sync_web_dist() {
+  if [[ ! -d "${APP_DIR}/apps/web/dist" ]]; then
+    warn "未找到前端产物目录，跳过静态文件同步"
+    return 1
+  fi
+
+  mkdir -p "${WEB_ROOT}"
+  rsync -a --delete "${APP_DIR}/apps/web/dist/" "${WEB_ROOT}/"
+
+  if id -u www-data >/dev/null 2>&1; then
+    chown -R www-data:www-data "${WEB_ROOT}"
+  fi
+
+  success "前端产物已同步到 ${WEB_ROOT}"
 }
 
-ensure_repo_exists() {
-  if has_repo; then
+check_url() {
+  local label="${1}"
+  local url="${2}"
+
+  if ! command_exists curl; then
+    warn "未检测到 curl，跳过 ${label} 检查"
+    return 1
+  fi
+
+  if curl --location --insecure --silent --show-error --fail --max-time 10 "${url}" >/dev/null; then
+    success "${label}: ${url}"
     return 0
   fi
 
-  warn "未检测到仓库: ${APP_DIR}"
-  if ask_yes_no "是否先克隆仓库到 ${APP_DIR}？"; then
-    mkdir -p "$(dirname "${APP_DIR}")"
-    git clone --branch "${REPO_BRANCH}" --depth=1 "${REPO_URL}" "${APP_DIR}"
-    success "仓库已克隆"
-    return 0
-  fi
-
+  warn "${label} 失败: ${url}"
   return 1
+}
+
+run_health_checks() {
+  step "健康检查"
+
+  local api_port vite_api_base_url failed=false
+  api_port="$(get_api_port)"
+  vite_api_base_url="$(get_vite_api_base_url)"
+
+  check_url "本机 API 健康检查" "http://127.0.0.1:${api_port}/health" || failed=true
+  check_url "本机内容接口" "http://127.0.0.1:${api_port}/api/content" || failed=true
+
+  if nginx_active; then
+    check_url "本机前台首页" "http://127.0.0.1/" || failed=true
+    check_url "本机前台内容接口" "http://127.0.0.1/api/content" || failed=true
+  else
+    warn "nginx 未运行，跳过本机前台入口检查"
+  fi
+
+  if [[ -n "${vite_api_base_url}" ]]; then
+    check_url "前端配置的远程 API" "${vite_api_base_url}/health" || failed=true
+  fi
+
+  if [[ "${failed}" == "true" ]]; then
+    warn "健康检查存在失败项，请结合 PM2 / nginx / .env 配置继续排查"
+    return 1
+  fi
+
+  success "健康检查通过"
 }
 
 show_status() {
@@ -235,19 +547,12 @@ show_status() {
   echo "项目目录: ${APP_DIR}"
   echo "静态目录: ${WEB_ROOT}"
   echo "备份目录: ${BACKUP_ROOT}"
+  echo "API 端口: $(get_api_port)"
+  echo "VITE_API_BASE_URL: ${VITE_API_BASE_URL:-$(get_vite_api_base_url)}"
   echo ""
 
-  if command -v git >/dev/null 2>&1; then
-    success "git 已安装"
-  else
-    warn "git 未安装"
-  fi
-
-  if command -v node >/dev/null 2>&1; then
-    success "Node.js: $(node -v)"
-  else
-    warn "Node.js 未安装"
-  fi
+  command_exists git && success "git 已安装" || warn "git 未安装"
+  command_exists node && success "Node.js: $(node -v)" || warn "Node.js 未安装"
 
   if has_pnpm_runner; then
     success "pnpm: $(pnpm_version)"
@@ -271,12 +576,13 @@ show_status() {
   [[ -f "${APP_DIR}/.env" ]] && success ".env 已存在" || warn ".env 不存在"
   [[ -d "${APP_DIR}/data" ]] && success "data 目录存在" || warn "data 目录不存在"
   [[ -d "${APP_DIR}/apps/api/uploads" ]] && success "上传目录存在" || warn "上传目录不存在"
-  [[ -d "${APP_DIR}/postgres-data" ]] && success "postgres-data 目录存在" || warn "postgres-data 目录不存在"
+  [[ -d "${WEB_ROOT}" ]] && success "静态目录存在" || warn "静态目录不存在"
 
   if nginx_installed; then
     success "nginx 已安装"
     has_nginx_conf && success "nginx 配置存在: ${NGINX_CONF}" || warn "nginx 配置不存在: ${NGINX_CONF}"
     nginx_active && success "nginx 正在运行" || warn "nginx 未运行"
+    [[ -n "$(current_server_names || true)" ]] && echo "server_name: $(current_server_names)"
   else
     warn "nginx 未安装"
   fi
@@ -299,6 +605,8 @@ show_status() {
   else
     warn "docker compose 不可用，或项目目录下没有 docker-compose.yml"
   fi
+
+  run_health_checks || true
 }
 
 safe_update_code() {
@@ -306,8 +614,12 @@ safe_update_code() {
 
   ensure_repo_exists || return 1
 
-  local local_sha remote_sha
-  local needs_runtime_repair=false
+  if ! command_exists git; then
+    error "未检测到 git，无法继续更新"
+    return 1
+  fi
+
+  local local_sha remote_sha needs_runtime_repair=false
 
   if [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
     error "检测到本地未提交改动，已停止更新。请先提交、备份或手动处理。"
@@ -337,6 +649,7 @@ safe_update_code() {
 
   if [[ "${local_sha}" == "${remote_sha}" && "${needs_runtime_repair}" == "false" ]]; then
     success "代码已是最新，且运行产物与进程状态正常，无需更新"
+    run_health_checks || true
     return 0
   fi
 
@@ -347,35 +660,9 @@ safe_update_code() {
     git -C "${APP_DIR}" pull --ff-only origin "${REPO_BRANCH}"
   fi
 
-  if ! has_pnpm_runner; then
-    error "pnpm/corepack 未安装，无法继续构建"
-    return 1
-  fi
-
-  cd "${APP_DIR}"
-
-  if [[ -f ".env.example" && ! -f ".env" ]]; then
-    cp .env.example .env
-    warn "未找到 .env，已从 .env.example 生成，请检查生产配置"
-  fi
-
-  info "安装依赖 ..."
-  run_pnpm install --frozen-lockfile
-
-  info "执行构建 ..."
-  run_pnpm run build
-
-  if [[ -d "${APP_DIR}/apps/web/dist" ]]; then
-    mkdir -p "${WEB_ROOT}"
-    rsync -a --delete "${APP_DIR}/apps/web/dist/" "${WEB_ROOT}/"
-    if id -u www-data >/dev/null 2>&1; then
-      chown -R www-data:www-data "${WEB_ROOT}"
-    fi
-    success "前端产物已同步到 ${WEB_ROOT}"
-  else
-    warn "未找到前端产物目录，跳过静态文件同步"
-  fi
-
+  ensure_env_file || true
+  build_workspace
+  sync_web_dist || true
   ensure_pm2_api_process || true
 
   if nginx_installed && has_nginx_conf; then
@@ -392,14 +679,84 @@ safe_update_code() {
     warn "未检测到 nginx 或配置文件，跳过 nginx 操作"
   fi
 
+  run_health_checks || true
   success "安全更新完成。未触碰 data、uploads、postgres-data 等本地数据目录。"
+}
+
+configure_https_certificate() {
+  local server_names="${1}"
+  local email=""
+  local domains=()
+  local certbot_args=()
+  local domain=""
+
+  if [[ "${server_names}" == "_" ]]; then
+    warn "server_name 为 `_`，跳过 HTTPS 证书申请"
+    return 0
+  fi
+
+  if ! ask_yes_no "是否现在为当前域名申请 Let's Encrypt HTTPS 证书？"; then
+    return 0
+  fi
+
+  install_apt_packages certbot python3-certbot-nginx
+  email="$(prompt_value "请输入证书通知邮箱:")"
+
+  if [[ -z "${email}" ]]; then
+    warn "邮箱为空，跳过证书申请"
+    return 0
+  fi
+
+  read -r -a domains <<< "${server_names}"
+  if [[ ${#domains[@]} -eq 0 ]]; then
+    warn "未解析到域名，跳过证书申请"
+    return 0
+  fi
+
+  for domain in "${domains[@]}"; do
+    certbot_args+=("-d" "${domain}")
+  done
+
+  certbot --nginx --agree-tos --non-interactive --redirect -m "${email}" "${certbot_args[@]}"
+
+  if command_exists systemctl && systemctl list-unit-files | grep -q '^certbot.timer'; then
+    systemctl enable certbot.timer >/dev/null 2>&1 || true
+    systemctl start certbot.timer >/dev/null 2>&1 || true
+  fi
+
+  success "HTTPS 证书申请流程已执行"
+}
+
+bootstrap_or_repair_deploy() {
+  step "首次部署 / 修复部署"
+
+  ensure_basic_system_packages
+  ensure_repo_exists || return 1
+  ensure_env_file || true
+  ensure_node_build_toolchain || return 1
+  ensure_pm2_installed || true
+
+  local current_names api_port server_names
+  current_names="$(current_server_names || true)"
+  api_port="$(get_api_port)"
+  server_names="$(prompt_value "请输入 server_name，多个域名用空格分隔，留空则使用当前值或 `_`" "${current_names:-_}")"
+
+  write_nginx_conf "${server_names:-_}" "${api_port}"
+  activate_nginx_site
+
+  build_workspace
+  sync_web_dist
+  ensure_pm2_api_process
+  run_health_checks || true
+  configure_https_certificate "${server_names:-_}"
+
+  success "部署修复流程完成"
 }
 
 create_backup() {
   step "创建备份"
 
   ensure_repo_exists || return 1
-
   mkdir -p "${BACKUP_ROOT}"
 
   local ts tmp_dir payload_dir backup_file app_parent app_name
@@ -469,7 +826,7 @@ choose_backup_file() {
     ((i++))
   done
 
-  local choice
+  local choice=""
   read -r -p "请输入要还原的备份编号: " choice
 
   if [[ ! "${choice}" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#BACKUP_FILES[@]} )); then
@@ -488,7 +845,6 @@ restore_backup() {
 
   warn "即将还原备份: ${SELECTED_BACKUP_FILE}"
   warn "还原前会先自动再备份一次当前状态"
-
   ask_yes_no "确认继续还原？" || return 0
 
   create_backup
@@ -549,6 +905,7 @@ restore_backup() {
     ensure_pm2_api_process || true
   fi
 
+  run_health_checks || true
   success "备份还原完成"
 }
 
@@ -556,10 +913,12 @@ show_menu() {
   clear || true
   echo -e "${BOLD}yk 运维菜单${RESET}"
   echo ""
-  echo "1. 检查环境 / PM2 / nginx / 仓库状态"
-  echo "2. 安全更新代码并按检测结果重启服务"
-  echo "3. 创建打包备份"
-  echo "4. 从备份还原"
+  echo "1. 检查环境 / 服务状态 / 健康检查"
+  echo "2. 首次部署 / 修复部署"
+  echo "3. 安全更新代码并按检测结果重启服务"
+  echo "4. 单独执行健康检查"
+  echo "5. 创建打包备份"
+  echo "6. 从备份还原"
   echo "0. 退出"
   echo ""
 }
@@ -579,14 +938,22 @@ main() {
         pause
         ;;
       2)
-        safe_update_code
+        bootstrap_or_repair_deploy
         pause
         ;;
       3)
-        create_backup
+        safe_update_code
         pause
         ;;
       4)
+        run_health_checks
+        pause
+        ;;
+      5)
+        create_backup
+        pause
+        ;;
+      6)
         restore_backup
         pause
         ;;

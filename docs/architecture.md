@@ -151,14 +151,35 @@ yk
 **当前菜单功能**
 
 1. 检查环境、仓库、PM2、nginx、docker compose 状态
-2. 安全更新代码
-   - 只做 `git fetch` + `git pull --ff-only`
-   - 本地工作区有改动时拒绝继续
-   - 不会执行 `git reset --hard`
-   - 不会主动重装 nginx / pm2 / 证书
-   - 不会删除 `data`、`uploads`、`postgres-data` 等本地数据目录
-3. 创建打包备份
-4. 从备份还原
+2. 首次部署 / 修复部署
+3. 安全更新代码
+4. 健康检查
+5. 创建打包备份
+6. 从备份还原
+
+**首次部署 / 修复部署行为**
+
+- 自动安装 `git`、`curl`、`rsync`、`nginx` 等基础系统依赖
+- 仓库不存在时可直接克隆到 `/opt/yakewangye`
+- 缺少 `.env` 时会从 `.env.example` 生成
+- 会生成或重写项目标准 nginx 配置，确保 `/api` 与 `/uploads` 反代存在且不吞前缀
+- 会构建工作区、同步前端静态产物、校正 PM2 启动脚本
+- PM2 启动时会显式注入项目 `.env`、`PROJECT_ROOT`、`NODE_ENV`、`API_PORT`
+- 可以选择继续申请 Let's Encrypt HTTPS 证书
+
+**健康检查行为**
+
+- 检查本机 API `http://127.0.0.1:<API_PORT>/health`
+- 检查本机内容接口 `http://127.0.0.1:<API_PORT>/api/content`
+- 如果 nginx 正在运行，再检查本机首页和同域 `/api/content`
+- 如果配置了 `VITE_API_BASE_URL`，额外检查该远程 API 的 `/health`
+
+**安全更新代码**
+
+- 只做 `git fetch` + `git pull --ff-only`
+- 本地工作区有改动时拒绝继续
+- 不会执行 `git reset --hard`
+- 不会删除 `data`、`uploads`、`postgres-data` 等本地数据目录
 
 **安全更新行为**
 
@@ -167,6 +188,7 @@ yk
 - 即使代码已是最新，只要 PM2 进程、API 编译产物或前端静态目录缺失，脚本也会继续执行修复流程
 - 如果检测到前端产物，则同步到 `/var/www/yakewangye`
 - PM2 会校验当前启动脚本；如果检测到旧的 `ts-node/src/main.ts` 方式，会自动删除并改为真实的 `dist/**/main.js` 编译产物
+- PM2 启动不再依赖“当前 shell 恰好带着环境变量”，而是明确加载项目 `.env`
 - 如果检测到 nginx 的 `/api` 反代使用了错误的 `proxy_pass .../;` 尾部斜杠，也会自动修正
 - 只有检测到已有 nginx 配置和运行中的 nginx 时才会执行 reload
 - 如果 PM2 或 nginx 不存在，只提示，不强行部署

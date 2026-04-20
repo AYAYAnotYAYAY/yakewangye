@@ -12,13 +12,12 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "ignoreDeprecations": "5.0",
-    "baseUrl": ".",
     "paths": {
       "@quanyu/shared": [
-        "packages/shared/src/index.ts"
+        "./packages/shared/src/index.ts"
       ],
       "@quanyu/shared/*": [
-        "packages/shared/src/*"
+        "./packages/shared/src/*"
       ]
     }
   }
