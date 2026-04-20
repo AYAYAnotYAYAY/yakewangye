@@ -473,6 +473,8 @@ build_workspace() {
   cd "${APP_DIR}"
   info "安装依赖 ..."
   run_pnpm install --frozen-lockfile
+  info "校正被 pnpm 保护策略延后的构建依赖 ..."
+  run_pnpm rebuild esbuild
   info "执行构建 ..."
   run_pnpm run build
 }

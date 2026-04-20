@@ -9,12 +9,12 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n web,api -c blue,green \"npm run dev --workspace @quanyu/web\" \"npm run dev --workspace @quanyu/api\"",
-    "dev:web": "npm run dev --workspace @quanyu/web",
-    "dev:api": "npm run dev --workspace @quanyu/api",
-    "build": "npm run build --workspace @quanyu/shared && npm run build --workspace @quanyu/api && npm run build --workspace @quanyu/web",
-    "lint": "npm run lint --workspace @quanyu/web && npm run lint --workspace @quanyu/api",
-    "typecheck": "npm run typecheck --workspace @quanyu/shared && npm run typecheck --workspace @quanyu/api && npm run typecheck --workspace @quanyu/web",
+    "dev": "concurrently -n web,api -c blue,green \"corepack pnpm --filter @quanyu/web dev\" \"corepack pnpm --filter @quanyu/api dev\"",
+    "dev:web": "corepack pnpm --filter @quanyu/web dev",
+    "dev:api": "corepack pnpm --filter @quanyu/api dev",
+    "build": "corepack pnpm --filter @quanyu/shared build && corepack pnpm --filter @quanyu/api build && corepack pnpm --filter @quanyu/web build",
+    "lint": "corepack pnpm --filter @quanyu/web lint && corepack pnpm --filter @quanyu/api lint",
+    "typecheck": "corepack pnpm --filter @quanyu/shared typecheck && corepack pnpm --filter @quanyu/api typecheck && corepack pnpm --filter @quanyu/web typecheck",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down"
   },
