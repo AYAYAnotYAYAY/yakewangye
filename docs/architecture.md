@@ -166,6 +166,7 @@ yk
 - 即使代码已是最新，只要 PM2 进程、API 编译产物或前端静态目录缺失，脚本也会继续执行修复流程
 - 如果检测到前端产物，则同步到 `/var/www/yakewangye`
 - PM2 会校验当前启动脚本；如果检测到旧的 `ts-node/src/main.ts` 方式，会自动删除并改为真实的 `dist/**/main.js` 编译产物
+- 如果检测到 nginx 的 `/api` 反代使用了错误的 `proxy_pass .../;` 尾部斜杠，也会自动修正
 - 只有检测到已有 nginx 配置和运行中的 nginx 时才会执行 reload
 - 如果 PM2 或 nginx 不存在，只提示，不强行部署
 

@@ -151,6 +151,32 @@ nginx_active() {
   command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx
 }
 
+ensure_nginx_api_proxy() {
+  if ! has_nginx_conf; then
+    return 1
+  fi
+
+  local changed=false
+
+  if grep -q 'proxy_pass[[:space:]]\+http://127\.0\.0\.1:4000/;' "${NGINX_CONF}" 2>/dev/null; then
+    warn "检测到 nginx /api 反代会吞掉 /api 前缀，正在修正 proxy_pass ..."
+    sed -i 's#proxy_pass[[:space:]]\+http://127\.0\.0\.1:4000/;#proxy_pass         http://127.0.0.1:4000;#g' "${NGINX_CONF}"
+    changed=true
+  fi
+
+  if grep -q 'proxy_pass[[:space:]]\+http://localhost:4000/;' "${NGINX_CONF}" 2>/dev/null; then
+    warn "检测到 nginx 使用 localhost 且带尾部斜杠，正在修正 proxy_pass ..."
+    sed -i 's#proxy_pass[[:space:]]\+http://localhost:4000/;#proxy_pass         http://127.0.0.1:4000;#g' "${NGINX_CONF}"
+    changed=true
+  fi
+
+  if [[ "${changed}" == "true" ]]; then
+    success "nginx API 反代配置已修正"
+  fi
+
+  return 0
+}
+
 docker_compose_available() {
   command -v docker >/dev/null 2>&1 && [[ -f "${APP_DIR}/docker-compose.yml" ]]
 }
@@ -326,6 +352,7 @@ safe_update_code() {
   ensure_pm2_api_process || true
 
   if nginx_installed && has_nginx_conf; then
+    ensure_nginx_api_proxy || true
     info "检测到 nginx 配置，执行语法检查 ..."
     nginx -t
     if nginx_active; then
