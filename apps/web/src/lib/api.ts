@@ -1,4 +1,4 @@
-import type { ChatSession, CmsContent, MediaLibraryAsset } from "@quanyu/shared";
+import type { ChatSession, CmsContent, MediaLibraryAsset, MediaLibraryState } from "@quanyu/shared";
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 export const ADMIN_TOKEN_STORAGE_KEY = "quanyu_admin_token";
@@ -31,6 +31,19 @@ function normalizeApiBaseUrl(value: string | undefined) {
 
 function buildRequestUrl(base: string, input: string) {
   return base ? `${base}${input}` : input;
+}
+
+function appendQuery(input: string, params: Record<string, string | undefined>) {
+  const search = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value && value.trim()) {
+      search.set(key, value);
+    }
+  }
+
+  const query = search.toString();
+  return query ? `${input}?${query}` : input;
 }
 
 function getApiBaseCandidates() {
@@ -115,6 +128,11 @@ function createAdminHeaders(token: string, extra?: HeadersInit) {
     Authorization: `Bearer ${token}`,
     ...extra,
   };
+}
+
+async function parseErrorMessage(response: Response, fallback: string) {
+  const errorPayload = (await response.json().catch(() => null)) as { error?: string } | null;
+  return errorPayload?.error || fallback;
 }
 
 export async function loginAdmin(payload: { username: string; password: string }) {
@@ -223,21 +241,52 @@ export async function saveContent(content: CmsContent, token: string) {
   return (await response.json()) as { ok: true; content: CmsContent };
 }
 
-export async function uploadFile(file: File, token: string) {
+export async function uploadFile(
+  file: File,
+  token: string,
+  options?: {
+    folderPath?: string;
+    onProgress?: (progress: number) => void;
+  },
+) {
   const formData = new FormData();
   formData.append("file", file);
-
-  const response = await fetchWithFallback("/api/admin/upload", {
-    method: "POST",
-    headers: createAdminHeaders(token),
-    body: formData,
+  const requestPath = appendQuery("/api/admin/media-library/upload", {
+    folderPath: options?.folderPath,
   });
 
-  if (!response.ok) {
-    throw new Error("Failed to upload file");
-  }
+  return new Promise<{ ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const requestUrl = buildRequestUrl(runtimeApiBaseUrl ?? API_BASE_URL, requestPath);
 
-  return (await response.json()) as { ok: true; url: string; fileName: string; asset: MediaLibraryAsset };
+    xhr.open("POST", requestUrl);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        options?.onProgress?.(Math.round((event.loaded / event.total) * 100));
+      }
+    };
+
+    xhr.onerror = () => reject(new Error("upload_network_error"));
+    xhr.onload = () => {
+      try {
+        const payload = JSON.parse(xhr.responseText) as { error?: string };
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new Error(payload.error || "upload_failed"));
+          return;
+        }
+
+        options?.onProgress?.(100);
+        resolve(payload as { ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState });
+      } catch {
+        reject(new Error("upload_failed"));
+      }
+    };
+
+    xhr.send(formData);
+  });
 }
 
 export async function fetchMediaLibrary(token: string) {
@@ -246,10 +295,91 @@ export async function fetchMediaLibrary(token: string) {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to fetch media library");
+    throw new Error(await parseErrorMessage(response, "Failed to fetch media library"));
   }
 
-  return (await response.json()) as { ok: true; items: MediaLibraryAsset[] };
+  return (await response.json()) as { ok: true; library: MediaLibraryState };
+}
+
+export async function createMediaFolder(payload: { name: string; parentPath?: string }, token: string) {
+  const response = await fetchWithFallback("/api/admin/media-library/folders", {
+    method: "POST",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "create_folder_failed"));
+  }
+
+  return (await response.json()) as { ok: true; library: MediaLibraryState };
+}
+
+export async function renameMediaFolder(payload: { path: string; newName: string }, token: string) {
+  const response = await fetchWithFallback("/api/admin/media-library/folders", {
+    method: "PATCH",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "rename_folder_failed"));
+  }
+
+  return (await response.json()) as { ok: true; library: MediaLibraryState };
+}
+
+export async function copyMediaFolder(payload: { sourcePath: string; targetParentPath?: string; newName: string }, token: string) {
+  const response = await fetchWithFallback("/api/admin/media-library/folders/copy", {
+    method: "POST",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "copy_folder_failed"));
+  }
+
+  return (await response.json()) as { ok: true; library: MediaLibraryState };
+}
+
+export async function updateMediaAsset(id: string, payload: { title?: string; folderPath?: string }, token: string) {
+  const response = await fetchWithFallback(`/api/admin/media-library/assets/${id}`, {
+    method: "PATCH",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "update_asset_failed"));
+  }
+
+  return (await response.json()) as { ok: true; asset: MediaLibraryAsset; library: MediaLibraryState };
+}
+
+export async function deleteMediaAsset(id: string, token: string) {
+  const response = await fetchWithFallback(`/api/admin/media-library/assets/${id}`, {
+    method: "DELETE",
+    headers: createAdminHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "delete_asset_failed"));
+  }
+
+  return (await response.json()) as { ok: true; library: MediaLibraryState };
 }
 
 export async function fetchChatSessions(token: string) {

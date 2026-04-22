@@ -191,16 +191,31 @@ export const mediaLibraryAssetSchema = z.object({
   id: z.string(),
   title: z.string(),
   fileName: z.string(),
+  storageKey: z.string(),
+  folderPath: z.string(),
   url: z.string(),
   mediaType: z.enum(["image", "video"]),
   mimeType: z.string(),
   size: z.number().int().min(0),
   createdAt: z.string(),
   updatedAt: z.string(),
-  source: z.enum(["upload", "import"]),
+  source: z.enum(["upload", "import", "copy"]),
 });
 
 export const mediaLibraryAssetListSchema = z.array(mediaLibraryAssetSchema);
+
+export const mediaLibraryFolderSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  path: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const mediaLibraryStateSchema = z.object({
+  folders: z.array(mediaLibraryFolderSchema),
+  assets: z.array(mediaLibraryAssetSchema),
+});
 
 export const landingPageSchema = z.object({
   id: z.string(),
@@ -287,6 +302,8 @@ export type ServiceItem = z.infer<typeof serviceSchema>;
 export type PricingItem = z.infer<typeof pricingItemSchema>;
 export type GalleryAsset = z.infer<typeof galleryAssetSchema>;
 export type MediaLibraryAsset = z.infer<typeof mediaLibraryAssetSchema>;
+export type MediaLibraryFolder = z.infer<typeof mediaLibraryFolderSchema>;
+export type MediaLibraryState = z.infer<typeof mediaLibraryStateSchema>;
 export type LandingPage = z.infer<typeof landingPageSchema>;
 export type AiConfig = z.infer<typeof aiConfigSchema>;
 export type TelegramConfig = z.infer<typeof telegramConfigSchema>;

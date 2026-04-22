@@ -1,7 +1,12 @@
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { cmsContentSeed, type MediaLibraryAsset } from "@quanyu/shared";
+import {
+  cmsContentSeed,
+  mediaLibraryStateSchema,
+  type MediaLibraryAsset,
+  type MediaLibraryFolder,
+} from "@quanyu/shared";
 import { resolveLocalDataRoot, resolveProjectRoot } from "../project-paths";
 
 const repoRoot = resolveProjectRoot();
@@ -114,34 +119,60 @@ export async function ensureUploadsStorage() {
 async function buildMediaLibrarySeedFromUploads() {
   const { uploadsDir } = getLocalStoragePaths();
   await ensureUploadsStorage();
-  const entries = await readdir(uploadsDir, { withFileTypes: true }).catch(() => []);
   const assets: MediaLibraryAsset[] = [];
+  const folders: MediaLibraryFolder[] = [];
 
-  for (const entry of entries) {
-    if (!entry.isFile()) {
-      continue;
+  async function walk(currentDir: string, currentRelativePath = ""): Promise<void> {
+    const entries = await readdir(currentDir, { withFileTypes: true }).catch(() => []);
+
+    for (const entry of entries) {
+      const absolutePath = path.resolve(currentDir, entry.name);
+      const relativePath = currentRelativePath ? path.posix.join(currentRelativePath, entry.name) : entry.name;
+
+      if (entry.isDirectory()) {
+        const folderStat = await stat(absolutePath);
+        folders.push({
+          id: `legacy-folder-${relativePath}`,
+          name: entry.name,
+          path: relativePath,
+          createdAt: folderStat.mtime.toISOString(),
+          updatedAt: folderStat.mtime.toISOString(),
+        });
+        await walk(absolutePath, relativePath);
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      const fileName = entry.name;
+      const fileStat = await stat(absolutePath);
+      const timestamp = fileStat.mtime.toISOString();
+
+      assets.push({
+        id: `legacy-${relativePath}`,
+        title: fileName,
+        fileName,
+        storageKey: relativePath,
+        folderPath: currentRelativePath,
+        url: `/uploads/${relativePath}`,
+        mediaType: inferMediaTypeFromFileName(fileName),
+        mimeType: inferMimeTypeFromFileName(fileName),
+        size: fileStat.size,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        source: "upload",
+      });
     }
-
-    const fileName = entry.name;
-    const filePath = path.resolve(uploadsDir, fileName);
-    const fileStat = await stat(filePath);
-    const timestamp = fileStat.mtime.toISOString();
-
-    assets.push({
-      id: `legacy-${fileName}`,
-      title: fileName,
-      fileName,
-      url: `/uploads/${fileName}`,
-      mediaType: inferMediaTypeFromFileName(fileName),
-      mimeType: inferMimeTypeFromFileName(fileName),
-      size: fileStat.size,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      source: "upload",
-    });
   }
 
-  return assets.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  await walk(uploadsDir);
+
+  return mediaLibraryStateSchema.parse({
+    folders: folders.sort((left, right) => left.path.localeCompare(right.path)),
+    assets: assets.sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+  });
 }
 
 export async function ensureContentStorage() {

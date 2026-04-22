@@ -5,7 +5,7 @@ import type {
   Doctor,
   GalleryAsset,
   LandingPage,
-  MediaLibraryAsset,
+  MediaLibraryState,
   PricingItem,
   ServiceItem,
 } from "@quanyu/shared";
@@ -18,13 +18,12 @@ import {
   fetchChatSessions,
   fetchMediaLibrary,
   loginAdmin,
-  resolveAssetUrl,
   saveContent,
   setupAdmin,
-  uploadFile,
 } from "../lib/api";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { MediaField, MediaLibraryManager } from "../components/admin-media";
 
 type AdminPageProps = {
   content: CmsContent;
@@ -49,48 +48,8 @@ type TabKey =
   | "media"
   | "pages";
 
-type MediaFilter = "image" | "video" | "all";
-
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function matchesMediaFilter(asset: MediaLibraryAsset, mediaFilter: MediaFilter) {
-  return mediaFilter === "all" || asset.mediaType === mediaFilter;
-}
-
-function mediaFilterLabel(mediaFilter: MediaFilter) {
-  switch (mediaFilter) {
-    case "video":
-      return "视频";
-    case "all":
-      return "素材";
-    default:
-      return "图片";
-  }
-}
-
-function mediaAcceptValue(mediaFilter: MediaFilter) {
-  switch (mediaFilter) {
-    case "video":
-      return "video/*";
-    case "all":
-      return "image/*,video/*";
-    default:
-      return "image/*";
-  }
-}
-
-function formatFileSize(size: number) {
-  if (size >= 1024 * 1024) {
-    return `${(size / 1024 / 1024).toFixed(1)} MB`;
-  }
-
-  if (size >= 1024) {
-    return `${Math.round(size / 1024)} KB`;
-  }
-
-  return `${size} B`;
 }
 
 function TextField(props: {
@@ -130,142 +89,6 @@ function ChipsField(props: {
         )
       }
     />
-  );
-}
-
-function AssetPreview(props: {
-  src: string;
-  alt: string;
-  mediaType: "image" | "video";
-  className?: string;
-}) {
-  const resolvedSrc = resolveAssetUrl(props.src);
-
-  if (props.mediaType === "video") {
-    return <video className={props.className} src={resolvedSrc} controls muted playsInline preload="metadata" />;
-  }
-
-  return <img className={props.className} src={resolvedSrc} alt={props.alt} />;
-}
-
-function MediaLibraryGrid(props: {
-  items: MediaLibraryAsset[];
-  mediaFilter: MediaFilter;
-  emptyMessage: string;
-  onSelect?: (asset: MediaLibraryAsset) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const filteredItems = props.items.filter((asset) => {
-    if (!matchesMediaFilter(asset, props.mediaFilter)) {
-      return false;
-    }
-
-    const keyword = query.trim().toLowerCase();
-
-    if (!keyword) {
-      return true;
-    }
-
-    return asset.title.toLowerCase().includes(keyword) || asset.fileName.toLowerCase().includes(keyword);
-  });
-
-  return (
-    <div className="admin-media-library">
-      <label className="admin-field">
-        <span>搜索素材</span>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="按标题或文件名搜索" />
-      </label>
-      {filteredItems.length ? (
-        <div className="admin-library-grid">
-          {filteredItems.map((asset) => (
-            <article key={asset.id} className="card admin-library-card">
-              <AssetPreview src={asset.url} alt={asset.title} mediaType={asset.mediaType} className="admin-library-preview" />
-              <div className="admin-library-body">
-                <strong>{asset.title}</strong>
-                <div className="entity-note">
-                  {asset.mediaType === "video" ? "视频" : "图片"} | {formatFileSize(asset.size)}
-                </div>
-                <div className="entity-note">{asset.fileName}</div>
-                <div className="entity-note">{new Date(asset.createdAt).toLocaleString()}</div>
-              </div>
-              {props.onSelect ? (
-                <button className="button secondary" onClick={() => props.onSelect?.(asset)} type="button">
-                  选用这个素材
-                </button>
-              ) : null}
-            </article>
-          ))}
-        </div>
-      ) : (
-        <div className="entity-note">{props.emptyMessage}</div>
-      )}
-    </div>
-  );
-}
-
-function MediaField(props: {
-  label: string;
-  value: string;
-  previewType?: "image" | "video";
-  mediaFilter?: MediaFilter;
-  libraryItems: MediaLibraryAsset[];
-  onUpload: (file: File) => Promise<MediaLibraryAsset>;
-  onChange: (value: string) => void;
-}) {
-  const [uploading, setUploading] = useState(false);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const mediaFilter = props.mediaFilter ?? "image";
-  const previewType = props.previewType ?? (mediaFilter === "video" ? "video" : "image");
-
-  return (
-    <div className="admin-media-field">
-      <TextField label={props.label} value={props.value} onChange={props.onChange} />
-      <div className="admin-media-actions">
-        <label className="button secondary admin-upload-btn">
-          {uploading ? "上传中..." : `上传${mediaFilterLabel(mediaFilter)}`}
-          <input
-            type="file"
-            accept={mediaAcceptValue(mediaFilter)}
-            style={{ display: "none" }}
-            onChange={async (event) => {
-              const file = event.target.files?.[0];
-
-              if (!file) {
-                return;
-              }
-
-              setUploading(true);
-              try {
-                const asset = await props.onUpload(file);
-                props.onChange(asset.url);
-              } catch (error) {
-                window.alert(`上传失败: ${String(error)}`);
-              } finally {
-                setUploading(false);
-                event.target.value = "";
-              }
-            }}
-          />
-        </label>
-        <button className="button secondary" onClick={() => setPickerOpen((current) => !current)} type="button">
-          {pickerOpen ? "收起素材库" : "从素材库选择"}
-        </button>
-        {props.value ? (
-          <AssetPreview src={props.value} alt={props.label} mediaType={previewType} className="admin-media-preview" />
-        ) : null}
-      </div>
-      {pickerOpen ? (
-        <MediaLibraryGrid
-          items={props.libraryItems}
-          mediaFilter={mediaFilter}
-          emptyMessage={`当前还没有可用的${mediaFilterLabel(mediaFilter)}素材。`}
-          onSelect={(asset) => {
-            props.onChange(asset.url);
-            setPickerOpen(false);
-          }}
-        />
-      ) : null}
-    </div>
   );
 }
 
@@ -390,7 +213,10 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [activeTab, setActiveTab] = useState<TabKey>("site");
   const [saving, setSaving] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [libraryItems, setLibraryItems] = useState<MediaLibraryAsset[]>([]);
+  const [mediaLibrary, setMediaLibrary] = useState<MediaLibraryState>({
+    folders: [],
+    assets: [],
+  });
 
   useEffect(() => {
     setDraft(content);
@@ -402,17 +228,14 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     });
 
     fetchMediaLibrary(adminToken)
-      .then((response) => setLibraryItems(response.items))
+      .then((response) => setMediaLibrary(response.library))
       .catch(() => {
-        setLibraryItems([]);
+        setMediaLibrary({
+          folders: [],
+          assets: [],
+        });
       });
   }, [adminToken]);
-
-  const handleUploadMedia = async (file: File) => {
-    const result = await uploadFile(file, adminToken);
-    setLibraryItems((current) => [result.asset, ...current.filter((item) => item.id !== result.asset.id)]);
-    return result.asset;
-  };
 
   const save = async () => {
     setSaving(true);
@@ -887,8 +710,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                   <MediaField
                     label="封面图"
                     value={item.coverImage}
-                    libraryItems={libraryItems}
-                    onUpload={handleUploadMedia}
+                    library={mediaLibrary}
+                    adminToken={adminToken}
+                    onLibraryChange={setMediaLibrary}
                     onChange={(value) => onChange({ ...item, coverImage: value })}
                   />
                   <TextField label="SEO Title" value={item.seoTitle} onChange={(value) => onChange({ ...item, seoTitle: value })} />
@@ -943,8 +767,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                   <MediaField
                     label="头像"
                     value={item.image}
-                    libraryItems={libraryItems}
-                    onUpload={handleUploadMedia}
+                    library={mediaLibrary}
+                    adminToken={adminToken}
+                    onLibraryChange={setMediaLibrary}
                     onChange={(value) => onChange({ ...item, image: value })}
                   />
                 </>
@@ -994,8 +819,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                   <MediaField
                     label="服务图片"
                     value={item.image}
-                    libraryItems={libraryItems}
-                    onUpload={handleUploadMedia}
+                    library={mediaLibrary}
+                    adminToken={adminToken}
+                    onLibraryChange={setMediaLibrary}
                     onChange={(value) => onChange({ ...item, image: value })}
                   />
                 </>
@@ -1087,8 +913,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                     value={item.imageUrl}
                     previewType={item.mediaType}
                     mediaFilter={item.mediaType}
-                    libraryItems={libraryItems}
-                    onUpload={handleUploadMedia}
+                    library={mediaLibrary}
+                    adminToken={adminToken}
+                    onLibraryChange={setMediaLibrary}
                     onChange={(value) => onChange({ ...item, imageUrl: value })}
                   />
                   <label className="admin-field">
@@ -1104,43 +931,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           ) : null}
 
           {activeTab === "media" ? (
-            <div className="card admin-panel">
-              <div className="admin-toolbar">
-                <div>
-                  <h2>素材库</h2>
-                  <p className="entity-note">上传后的图片和视频会自动入库，其他位置可以直接复用，不需要重复上传。</p>
-                </div>
-                <label className="button primary admin-upload-btn">
-                  上传素材
-                  <input
-                    type="file"
-                    accept="image/*,video/*"
-                    style={{ display: "none" }}
-                    onChange={async (event) => {
-                      const file = event.target.files?.[0];
-
-                      if (!file) {
-                        return;
-                      }
-
-                      try {
-                        await handleUploadMedia(file);
-                        window.alert("素材已加入素材库");
-                      } catch (error) {
-                        window.alert(`上传失败: ${String(error)}`);
-                      } finally {
-                        event.target.value = "";
-                      }
-                    }}
-                  />
-                </label>
-              </div>
-              <MediaLibraryGrid
-                items={libraryItems}
-                mediaFilter="all"
-                emptyMessage="当前素材库还是空的，可以先上传一些图片或视频。"
-              />
-            </div>
+            <MediaLibraryManager library={mediaLibrary} adminToken={adminToken} onLibraryChange={setMediaLibrary} />
           ) : null}
 
           {activeTab === "pages" ? (
