@@ -867,8 +867,12 @@ safe_update_code() {
   local local_sha remote_sha needs_runtime_repair=false
 
   if [[ -n "$(git -C "${APP_DIR}" status --porcelain 2>/dev/null)" ]]; then
-    error "检测到本地未提交改动，已停止更新。请先提交、备份或手动处理。"
-    return 1
+    warn "检测到本地未提交改动，开始自动备份当前状态 ..."
+    create_backup || return 1
+    warn "备份完成，开始自动清理代码工作区 ..."
+    git -C "${APP_DIR}" reset --hard HEAD
+    git -C "${APP_DIR}" clean -fd
+    success "代码工作区已清理，将继续执行更新"
   fi
 
   info "获取远程最新提交 ..."
