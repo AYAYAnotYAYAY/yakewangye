@@ -14,7 +14,7 @@ import { ensureAllLocalStorage } from "./lib/storage/storage-paths";
 async function bootstrap() {
   await ensureAllLocalStorage();
   const uploadMaxFileSizeMb = Math.max(10, Number(process.env.UPLOAD_MAX_FILE_SIZE_MB ?? 1024) || 1024);
-  const uploadChunkSizeMb = Math.max(1, Number(process.env.UPLOAD_CHUNK_SIZE_MB ?? 8) || 8);
+  const uploadChunkSizeMb = Math.max(1, Number(process.env.UPLOAD_CHUNK_SIZE_MB ?? 32) || 32);
 
   const app = Fastify({
     logger: true,

@@ -5,7 +5,8 @@ export const ADMIN_TOKEN_STORAGE_KEY = "quanyu_admin_token";
 let runtimeApiBaseUrl: string | undefined = API_BASE_URL || undefined;
 const MAX_MEDIA_UPLOAD_SIZE_MB = 1024;
 const MAX_MEDIA_UPLOAD_SIZE_BYTES = MAX_MEDIA_UPLOAD_SIZE_MB * 1024 * 1024;
-const MEDIA_UPLOAD_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
+// 为了绕过常见反向代理（如 Nginx 默认 1MB）的限制，将分片大小缩小到 512KB（防止包含请求头后超出1MB）
+const MEDIA_UPLOAD_CHUNK_SIZE_BYTES = 512 * 1024;
 const UPLOAD_SESSION_STORAGE_PREFIX = "quanyu_upload_session_v1";
 
 export type AdminStatus =
