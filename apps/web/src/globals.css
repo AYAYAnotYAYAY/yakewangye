@@ -879,15 +879,48 @@ h1, h2, h3, h4 {
   gap: 8px;
 }
 
-.admin-tab-select {
+.admin-tab-switcher {
   display: none;
-  gap: 8px;
+  gap: 10px;
 }
 
-.admin-tab-select span {
-  font-size: 13px;
+.admin-tab-trigger {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid rgba(17, 44, 78, 0.08);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top left, rgba(47, 120, 255, 0.12), transparent 48%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 255, 0.98));
+  text-align: left;
+  box-shadow: 0 18px 36px rgba(20, 40, 90, 0.08);
+  cursor: pointer;
+}
+
+.admin-tab-trigger-kicker {
+  font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2f78ff;
+}
+
+.admin-tab-trigger strong {
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.admin-tab-trigger-hint {
+  font-size: 13px;
   color: var(--muted);
+}
+
+.admin-tab-sheet {
+  display: grid;
+  gap: 8px;
+  padding: 8px 0 0;
 }
 
 .admin-nav-item {
@@ -1318,13 +1351,25 @@ h1, h2, h3, h4 {
 
 .admin-upload-dialog {
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 16px;
+  min-height: 0;
+}
+
+.admin-upload-dialog-handle {
+  width: 52px;
+  height: 6px;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: rgba(17, 44, 78, 0.16);
 }
 
 .admin-upload-dialog .admin-upload-queue-list {
-  max-height: min(52vh, 520px);
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
   padding-right: 4px;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .admin-upload-dialog-actions {
@@ -1863,7 +1908,14 @@ h1, h2, h3, h4 {
     display: none;
   }
 
-  .admin-tab-select {
+  .admin-sidebar {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .admin-tab-switcher {
     display: grid;
   }
 
@@ -1999,7 +2051,7 @@ h1, h2, h3, h4 {
 
   .admin-sidebar {
     margin: 0;
-    padding: 8px;
+    padding: 0;
   }
 
   .admin-header-actions {
@@ -2015,19 +2067,20 @@ h1, h2, h3, h4 {
   }
 
   .admin-modal-backdrop {
-    padding: 12px;
-    align-items: end;
+    place-items: end stretch;
+    padding: 0;
   }
 
   .admin-modal {
     width: 100%;
-    max-height: min(78vh, 860px);
-    padding: 16px;
-    border-radius: 18px 18px 0 0;
+    height: min(88dvh, 760px);
+    max-height: none;
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    border-radius: 22px 22px 0 0;
   }
 
   .admin-upload-dialog .admin-upload-queue-list {
-    max-height: min(54vh, 520px);
+    padding-bottom: 6px;
   }
 
   .admin-entity-card {

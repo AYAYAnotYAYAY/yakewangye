@@ -61,6 +61,10 @@ const ADMIN_TABS: Array<[TabKey, string]> = [
   ["pages", "自定义页"],
 ];
 
+function getAdminTabLabel(activeTab: TabKey) {
+  return ADMIN_TABS.find(([key]) => key === activeTab)?.[1] ?? "模块";
+}
+
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -224,6 +228,7 @@ function EntityListEditor<T extends { id: string }>(props: {
 function AdminConsole({ content, onSaved, adminToken, username, onLogout }: AdminConsoleProps) {
   const [draft, setDraft] = useState<CmsContent>(content);
   const [activeTab, setActiveTab] = useState<TabKey>("site");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [mediaLibrary, setMediaLibrary] = useState<MediaLibraryState>({
@@ -249,6 +254,10 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
         });
       });
   }, [adminToken]);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [activeTab]);
 
   const save = async () => {
     setSaving(true);
@@ -288,16 +297,27 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
 
       <div className="admin-layout">
         <aside className="card admin-sidebar">
-          <label className="admin-tab-select">
-            <span>当前模块</span>
-            <select value={activeTab} onChange={(event) => setActiveTab(event.target.value as TabKey)}>
-              {ADMIN_TABS.map(([key, label]) => (
-                <option key={key} value={key}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className={`admin-tab-switcher ${mobileNavOpen ? "open" : ""}`}>
+            <button className="admin-tab-trigger" onClick={() => setMobileNavOpen((current) => !current)} type="button" aria-expanded={mobileNavOpen}>
+              <span className="admin-tab-trigger-kicker">当前模块</span>
+              <strong>{getAdminTabLabel(activeTab)}</strong>
+              <span className="admin-tab-trigger-hint">{mobileNavOpen ? "收起模块列表" : "点击切换模块"}</span>
+            </button>
+            {mobileNavOpen ? (
+              <div className="admin-tab-sheet">
+                {ADMIN_TABS.map(([key, label]) => (
+                  <button
+                    key={key}
+                    className={`admin-nav-item ${activeTab === key ? "active" : ""}`}
+                    onClick={() => setActiveTab(key)}
+                    type="button"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <div className="admin-sidebar-grid">
             {ADMIN_TABS.map(([key, label]) => (
               <button

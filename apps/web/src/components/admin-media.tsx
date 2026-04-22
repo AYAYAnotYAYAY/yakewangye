@@ -149,6 +149,7 @@ function UploadQueueDialog(props: { items: UploadQueueItem[]; open: boolean; onC
   return (
     <div className="admin-modal-backdrop" role="presentation">
       <div className="card admin-modal admin-upload-dialog" aria-modal="true" role="dialog" aria-labelledby="upload-dialog-title">
+        <div className="admin-upload-dialog-handle" aria-hidden="true" />
         <div className="admin-upload-queue-head">
           <div>
             <h3 id="upload-dialog-title">上传进度</h3>
