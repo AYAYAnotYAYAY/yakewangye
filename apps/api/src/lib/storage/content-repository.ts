@@ -1,7 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { cmsContentSchema, cmsContentSeed, type CmsContent } from "@quanyu/shared";
-import { resolveProjectRoot } from "../project-paths";
+import { readFile, writeFile } from "node:fs/promises";
+import { cmsContentSchema, type CmsContent } from "@quanyu/shared";
+import { ensureContentStorage, ensureUploadsStorage, getLocalStoragePaths } from "./storage-paths";
 
 export type ContentRepository = {
   read: () => Promise<CmsContent>;
@@ -10,17 +9,10 @@ export type ContentRepository = {
 };
 
 function createJsonContentRepository(): ContentRepository {
-  const repoRoot = resolveProjectRoot();
-  const contentFilePath = path.resolve(repoRoot, "data/content.json");
+  const { contentFilePath, uploadsDir } = getLocalStoragePaths();
 
   async function ensureContentFile() {
-    await mkdir(path.dirname(contentFilePath), { recursive: true });
-
-    try {
-      await readFile(contentFilePath, "utf8");
-    } catch {
-      await writeFile(contentFilePath, JSON.stringify(cmsContentSeed, null, 2), "utf8");
-    }
+    await ensureContentStorage();
   }
 
   return {
@@ -36,7 +28,8 @@ function createJsonContentRepository(): ContentRepository {
       return validated;
     },
     getUploadsDir() {
-      return path.resolve(repoRoot, "apps/api/uploads");
+      void ensureUploadsStorage();
+      return uploadsDir;
     },
   };
 }

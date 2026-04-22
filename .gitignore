@@ -3,6 +3,7 @@ node_modules/
 *.log
 .env
 .env.local
+local/
 .next/
 dist/
 coverage/

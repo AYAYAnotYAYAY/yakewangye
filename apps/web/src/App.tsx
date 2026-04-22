@@ -85,9 +85,13 @@ function EmptyState(props: { title: string; description: string }) {
   );
 }
 
-function MediaPreview(props: { src: string; alt: string }) {
+function MediaPreview(props: { src: string; alt: string; mediaType?: "image" | "video" }) {
   if (!props.src) {
     return <div className="media-placeholder">{props.alt}</div>;
+  }
+
+  if (props.mediaType === "video") {
+    return <video className="entity-image" src={resolveAssetUrl(props.src)} controls muted playsInline preload="metadata" />;
   }
 
   return <img className="entity-image" src={resolveAssetUrl(props.src)} alt={props.alt} />;
@@ -217,12 +221,12 @@ function GalleryList(props: { items: GalleryAsset[]; anchorId?: string }) {
         <div className="section-heading">
           <span className="eyebrow">图册</span>
           <h2>图册与视频展示</h2>
-          <p>支持图片上传，视频可以先通过封面图与说明展示。</p>
+          <p>支持图片和视频素材，后台可直接本地上传或从素材库复用。</p>
         </div>
         <div className="grid-3">
           {props.items.map((item) => (
             <article key={item.id} className="card entity-card">
-              <MediaPreview src={item.imageUrl} alt={item.title} />
+              <MediaPreview src={item.imageUrl} alt={item.title} mediaType={item.mediaType} />
               <div className="entity-body">
                 <div className="entity-meta">{item.mediaType === "video" ? "视频" : "图片"}</div>
                 <h3>{item.title}</h3>

@@ -1,4 +1,4 @@
-import type { ChatSession, CmsContent } from "@quanyu/shared";
+import type { ChatSession, CmsContent, MediaLibraryAsset } from "@quanyu/shared";
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 export const ADMIN_TOKEN_STORAGE_KEY = "quanyu_admin_token";
@@ -237,7 +237,19 @@ export async function uploadFile(file: File, token: string) {
     throw new Error("Failed to upload file");
   }
 
-  return (await response.json()) as { ok: true; url: string; fileName: string };
+  return (await response.json()) as { ok: true; url: string; fileName: string; asset: MediaLibraryAsset };
+}
+
+export async function fetchMediaLibrary(token: string) {
+  const response = await fetchWithFallback("/api/admin/media-library", {
+    headers: createAdminHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch media library");
+  }
+
+  return (await response.json()) as { ok: true; items: MediaLibraryAsset[] };
 }
 
 export async function fetchChatSessions(token: string) {

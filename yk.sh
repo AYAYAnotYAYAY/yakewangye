@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_URL="https://github.com/AYAYAnotYAYAY/yakewangye.git"
 REPO_BRANCH="main"
 APP_DIR="/opt/yakewangye"
+APP_DATA_DIR="${APP_DIR}-local"
 WEB_ROOT="/var/www/yakewangye"
 NGINX_CONF_NAME="yakewangye"
 NGINX_CONF="/etc/nginx/sites-available/${NGINX_CONF_NAME}.conf"
@@ -204,6 +205,65 @@ app_env_file() {
   printf '%s' "${APP_DIR}/.env"
 }
 
+default_app_data_dir() {
+  printf '%s' "${APP_DATA_DIR}"
+}
+
+configured_data_dir() {
+  local env_file value
+  env_file="$(app_env_file)"
+  value="$(read_env_value "${env_file}" "YK_DATA_DIR" 2>/dev/null || true)"
+
+  if [[ -n "${value}" ]]; then
+    printf '%s' "${value}"
+    return 0
+  fi
+
+  value="$(read_env_value "${env_file}" "APP_DATA_DIR" 2>/dev/null || true)"
+  if [[ -n "${value}" ]]; then
+    printf '%s' "${value}"
+    return 0
+  fi
+
+  printf '%s' "$(default_app_data_dir)"
+}
+
+upsert_env_value() {
+  local file="${1}"
+  local key="${2}"
+  local value="${3}"
+  local tmp_file=""
+  tmp_file="$(mktemp)"
+
+  if [[ -f "${file}" ]]; then
+    awk -v key="${key}" -v value="${value}" '
+      BEGIN { updated = 0 }
+      $0 ~ "^[[:space:]]*" key "=" {
+        print key "=" value
+        updated = 1
+        next
+      }
+      { print }
+      END {
+        if (!updated) {
+          print key "=" value
+        }
+      }
+    ' "${file}" > "${tmp_file}"
+  else
+    printf '%s=%s\n' "${key}" "${value}" > "${tmp_file}"
+  fi
+
+  mv "${tmp_file}" "${file}"
+}
+
+ensure_local_data_dir() {
+  local data_dir
+  data_dir="$(configured_data_dir)"
+  mkdir -p "${data_dir}" "${data_dir}/uploads"
+  success "本地数据目录已就绪: ${data_dir}"
+}
+
 load_app_env() {
   local env_file
   env_file="$(app_env_file)"
@@ -298,19 +358,24 @@ ensure_repo_exists() {
 }
 
 ensure_env_file() {
+  local env_file data_dir
+  env_file="${APP_DIR}/.env"
+
   if [[ -f "${APP_DIR}/.env" ]]; then
     success ".env 已存在"
-    return 0
-  fi
-
-  if [[ -f "${APP_DIR}/.env.example" ]]; then
+  elif [[ -f "${APP_DIR}/.env.example" ]]; then
     cp "${APP_DIR}/.env.example" "${APP_DIR}/.env"
-    warn "未检测到 .env，已由 .env.example 生成，请马上检查生产配置"
-    return 0
+    warn "未检测到 .env，已由 .env.example 生成，请检查生产配置"
+  else
+    warn "未找到 .env.example，无法自动生成 .env"
+    return 1
   fi
 
-  warn "未找到 .env.example，无法自动生成 .env"
-  return 1
+  data_dir="$(configured_data_dir)"
+  upsert_env_value "${env_file}" "YK_DATA_DIR" "${data_dir}"
+  ensure_local_data_dir
+  success ".env 已自动写入 YK_DATA_DIR=${data_dir}"
+  return 0
 }
 
 current_server_names() {
@@ -719,6 +784,7 @@ show_status() {
 
   echo "脚本路径: ${SCRIPT_INSTALL_PATH}"
   echo "项目目录: ${APP_DIR}"
+  echo "数据目录: $(configured_data_dir)"
   echo "静态目录: ${WEB_ROOT}"
   echo "备份目录: ${BACKUP_ROOT}"
   echo "API 端口: $(get_api_port)"
@@ -750,8 +816,10 @@ show_status() {
   fi
 
   [[ -f "${APP_DIR}/.env" ]] && success ".env 已存在" || warn ".env 不存在"
-  [[ -d "${APP_DIR}/data" ]] && success "data 目录存在" || warn "data 目录不存在"
-  [[ -d "${APP_DIR}/apps/api/uploads" ]] && success "上传目录存在" || warn "上传目录不存在"
+  [[ -d "$(configured_data_dir)" ]] && success "独立数据目录存在" || warn "独立数据目录不存在"
+  [[ -d "$(configured_data_dir)/uploads" ]] && success "素材上传目录存在" || warn "素材上传目录不存在"
+  [[ -d "${APP_DIR}/data" ]] && warn "检测到旧 data 目录（新版本会优先使用独立数据目录）" || true
+  [[ -d "${APP_DIR}/apps/api/uploads" ]] && warn "检测到旧 uploads 目录（新版本会优先使用独立数据目录）" || true
   [[ -d "${WEB_ROOT}" ]] && success "静态目录存在" || warn "静态目录不存在"
 
   if nginx_installed; then
@@ -838,6 +906,7 @@ safe_update_code() {
   fi
 
   ensure_env_file || true
+  ensure_local_data_dir || true
   build_workspace
   sync_web_dist || true
   ensure_pm2_api_process || true
@@ -857,7 +926,7 @@ safe_update_code() {
   fi
 
   run_health_checks || true
-  success "安全更新完成。未触碰 data、uploads、postgres-data 等本地数据目录。"
+  success "安全更新完成。网站代码已更新，本地数据目录保持不动: $(configured_data_dir)"
 }
 
 configure_https_certificate() {
@@ -915,6 +984,7 @@ bootstrap_or_repair_deploy() {
   ensure_basic_system_packages
   ensure_repo_exists || return 1
   ensure_env_file || true
+  ensure_local_data_dir || true
   ensure_node_build_toolchain || return 1
   ensure_pm2_installed || true
 
@@ -957,6 +1027,7 @@ host=$(hostname)
 repo_branch=$(git -C "${APP_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 repo_commit=$(git -C "${APP_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)
 app_dir=${APP_DIR}
+data_dir=$(configured_data_dir)
 web_root=${WEB_ROOT}
 nginx_conf=${NGINX_CONF}
 pm2_app=${PM2_APP}
@@ -975,6 +1046,10 @@ EOF
 
   if [[ -d "${WEB_ROOT}" ]]; then
     tar -C "$(dirname "${WEB_ROOT}")" -czf "${payload_dir}/web-root.tar.gz" "$(basename "${WEB_ROOT}")"
+  fi
+
+  if [[ -d "$(configured_data_dir)" ]]; then
+    tar -C "$(dirname "$(configured_data_dir)")" -czf "${payload_dir}/data-root.tar.gz" "$(basename "$(configured_data_dir)")"
   fi
 
   if has_nginx_conf; then
@@ -1060,6 +1135,15 @@ restore_backup() {
     tar -xzf "${tmp_dir}/payload/web-root.tar.gz" -C "${tmp_dir}/web"
     mkdir -p "${WEB_ROOT}"
     rsync -a --delete "${tmp_dir}/web/$(basename "${WEB_ROOT}")/" "${WEB_ROOT}/"
+  fi
+
+  if [[ -f "${tmp_dir}/payload/data-root.tar.gz" ]]; then
+    local data_dir
+    data_dir="$(configured_data_dir)"
+    mkdir -p "${tmp_dir}/data"
+    tar -xzf "${tmp_dir}/payload/data-root.tar.gz" -C "${tmp_dir}/data"
+    mkdir -p "${data_dir}"
+    rsync -a --delete "${tmp_dir}/data/$(basename "${data_dir}")/" "${data_dir}/"
   fi
 
   if [[ -f "${tmp_dir}/payload/nginx.conf" ]]; then

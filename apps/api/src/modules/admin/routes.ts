@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
 import { cmsContentSchema } from "@quanyu/shared";
 import {
@@ -14,18 +14,54 @@ import {
   validateAdminCredentials,
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
+import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
+import { ensureUploadsStorage } from "../../lib/storage/storage-paths";
+
+function resolveMediaType(mimeType: string | undefined): "image" | "video" | null {
+  if (!mimeType) {
+    return null;
+  }
+
+  if (mimeType.startsWith("image/")) {
+    return "image";
+  }
+
+  if (mimeType.startsWith("video/")) {
+    return "video";
+  }
+
+  return null;
+}
 
 async function saveUpload(file: MultipartFile) {
+  const mediaType = resolveMediaType(file.mimetype);
+
+  if (!mediaType) {
+    throw new Error("unsupported_media_type");
+  }
+
   const uploadsDir = getUploadsDir();
+  await ensureUploadsStorage();
   await mkdir(uploadsDir, { recursive: true });
   const ext = path.extname(file.filename || "") || ".bin";
   const fileName = `${Date.now()}-${randomUUID()}${ext}`;
   const filePath = path.join(uploadsDir, fileName);
   const buffer = await file.toBuffer();
   await writeFile(filePath, buffer);
-  return {
-    url: `/uploads/${fileName}`,
+  const url = `/uploads/${fileName}`;
+  const asset = await mediaLibraryRepository.add({
+    title: file.filename || fileName,
     fileName,
+    url,
+    mediaType,
+    mimeType: file.mimetype || (mediaType === "video" ? "video/mp4" : "image/jpeg"),
+    size: buffer.byteLength,
+  });
+
+  return {
+    url,
+    fileName,
+    asset,
   };
 }
 
@@ -136,7 +172,20 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     };
   });
 
-  app.post("/api/admin/upload", async (request, reply) => {
+  app.get("/api/admin/media-library", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    return {
+      ok: true,
+      items: await mediaLibraryRepository.list(),
+    };
+  });
+
+  async function handleUpload(request: FastifyRequest, reply: FastifyReply) {
     const admin = requireAdmin(request, reply);
 
     if (!admin || reply.sent) {
@@ -152,10 +201,24 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       });
     }
 
-    const saved = await saveUpload(file);
-    return {
-      ok: true,
-      ...saved,
-    };
-  });
+    try {
+      const saved = await saveUpload(file);
+      return {
+        ok: true,
+        ...saved,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message === "unsupported_media_type") {
+        return reply.status(400).send({
+          ok: false,
+          error: "Only image and video uploads are supported",
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  app.post("/api/admin/upload", handleUpload);
+  app.post("/api/admin/media-library/upload", handleUpload);
 }

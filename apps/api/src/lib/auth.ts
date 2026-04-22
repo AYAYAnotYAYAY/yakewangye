@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { resolveProjectRoot } from "./project-paths";
+import { ensureAdminStorage, getLocalStoragePaths } from "./storage/storage-paths";
 
 const adminLoginSchema = z.object({
   username: z.string().min(1),
@@ -39,8 +39,7 @@ type AdminCredentialSource =
       source: "setup_required";
     };
 
-const repoRoot = resolveProjectRoot();
-const adminConfigFilePath = path.resolve(repoRoot, "data/admin-config.json");
+const { adminConfigFilePath } = getLocalStoragePaths();
 
 function getAdminUsernameFromEnv() {
   return process.env.ADMIN_USERNAME?.trim() ?? "";
@@ -72,6 +71,8 @@ function hashPassword(password: string) {
 }
 
 async function readAdminFileConfig() {
+  await ensureAdminStorage();
+
   try {
     const raw = await readFile(adminConfigFilePath, "utf8");
     return JSON.parse(raw) as AdminFileConfig;
@@ -82,6 +83,7 @@ async function readAdminFileConfig() {
 
 async function writeAdminFileConfig(config: AdminFileConfig) {
   await mkdir(path.dirname(adminConfigFilePath), { recursive: true });
+  await ensureAdminStorage();
   await writeFile(adminConfigFilePath, JSON.stringify(config, null, 2), "utf8");
 }
 

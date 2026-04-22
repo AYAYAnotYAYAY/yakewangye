@@ -101,6 +101,9 @@ rsync -a --delete-delay --delay-updates \
   --exclude ".DS_Store" \
   --exclude "deploy.sh" \
   --exclude "update.sh" \
+  --exclude "data" \
+  --exclude "apps/api/uploads" \
+  --exclude "local" \
   "${TMP_DIR}/" "${SITE_DIR}/"
 
 chown -R www-data:www-data "${SITE_DIR}" || true

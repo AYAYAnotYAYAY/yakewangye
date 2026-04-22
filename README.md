@@ -41,6 +41,8 @@ corepack pnpm run dev
 - `VITE_API_BASE_URL` 是 Vite 构建时变量。静态文件已经构建完成后，再去服务器上修改 `.env` 不会自动改变前端请求地址。
 - 根目录的 `deploy.sh` 只适合“静态文件 + 已存在 API 服务”的场景；如果你需要一并校正 PM2 / nginx / API 编译产物、环境变量和健康检查，应该使用 `yk.sh`。
 - `yk.sh` 现在支持首次部署/修复部署、健康检查、安全更新、备份和还原，适合作为线上默认运维入口。
+- 线上建议显式设置 `YK_DATA_DIR=/你的独立数据目录`，把内容 JSON、管理员配置、聊天记录、素材库索引和上传文件都放到代码目录外。这样更新代码不会覆盖已有数据。
+- 也可以在仓库根目录创建 git 忽略的 `local/project-paths.json`，内容例如 `{"dataRoot":"/opt/yakewangye-local"}`。
 
 ## 目录
 
@@ -62,6 +64,7 @@ docs/
 
 - 根目录仍保留原始 `index.html` 作为历史参考页面，但新的开发入口已经切换到 `apps/web`。
 - 当前前台运行时为 `React + Vite`，目的是先保证工作区稳定可跑；生产 SSR 与更强 SEO 能力后续可演进到 `Next.js`。
-- 当前后台是本地 JSON CMS 最小版，内容保存在 [`data/content.json`](./data/content.json)，上传文件保存在 `apps/api/uploads/`。
-- AI 配置也保存在 [`data/content.json`](./data/content.json) 的 `aiConfig` 字段。
-- 聊天记录当前保存在 [`data/chat-sessions.json`](./data/chat-sessions.json)。
+- 当前后台是本地 JSON CMS 最小版，但数据目录已经支持独立配置。默认会优先使用 `YK_DATA_DIR` 或 `local/project-paths.json`，否则回退到仓库同级目录 `../yakewangye-local/`。
+- 内容、AI 配置、管理员配置、聊天记录、素材库索引和上传文件都会写入独立数据目录，而不是写死在代码仓库里。
+- 老版本放在仓库内的 `data/` 与 `apps/api/uploads/` 会在首次启动时自动迁移到新的本地数据目录。
+- 后台所有媒体字段都支持三种来源：直接填 URL、本地上传、从素材库选择；上传后的图片和视频会自动进入素材库复用。

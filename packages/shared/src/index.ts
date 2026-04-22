@@ -187,6 +187,21 @@ export const galleryAssetSchema = z.object({
   mediaType: z.enum(["image", "video"]),
 });
 
+export const mediaLibraryAssetSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  fileName: z.string(),
+  url: z.string(),
+  mediaType: z.enum(["image", "video"]),
+  mimeType: z.string(),
+  size: z.number().int().min(0),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  source: z.enum(["upload", "import"]),
+});
+
+export const mediaLibraryAssetListSchema = z.array(mediaLibraryAssetSchema);
+
 export const landingPageSchema = z.object({
   id: z.string(),
   slug: z.string(),
@@ -271,6 +286,7 @@ export type Doctor = z.infer<typeof doctorSchema>;
 export type ServiceItem = z.infer<typeof serviceSchema>;
 export type PricingItem = z.infer<typeof pricingItemSchema>;
 export type GalleryAsset = z.infer<typeof galleryAssetSchema>;
+export type MediaLibraryAsset = z.infer<typeof mediaLibraryAssetSchema>;
 export type LandingPage = z.infer<typeof landingPageSchema>;
 export type AiConfig = z.infer<typeof aiConfigSchema>;
 export type TelegramConfig = z.infer<typeof telegramConfigSchema>;

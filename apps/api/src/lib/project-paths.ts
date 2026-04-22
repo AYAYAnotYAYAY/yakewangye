@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 function unique(values: Array<string | undefined>) {
@@ -39,4 +39,48 @@ export function resolveProjectRoot() {
   }
 
   return path.resolve(process.cwd());
+}
+
+type LocalProjectConfig = {
+  dataRoot?: string;
+};
+
+function resolveFromRepoRoot(repoRoot: string, value: string) {
+  return path.isAbsolute(value) ? path.resolve(value) : path.resolve(repoRoot, value);
+}
+
+function readLocalProjectConfig(repoRoot: string): LocalProjectConfig | null {
+  const configPath = path.resolve(repoRoot, "local/project-paths.json");
+
+  if (!existsSync(configPath)) {
+    return null;
+  }
+
+  try {
+    const raw = readFileSync(configPath, "utf8");
+    return JSON.parse(raw) as LocalProjectConfig;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveLocalDataRoot() {
+  const repoRoot = resolveProjectRoot();
+  const configuredValue = unique([process.env.YK_DATA_DIR, process.env.APP_DATA_DIR, process.env.LOCAL_DATA_DIR])[0];
+
+  if (configuredValue) {
+    return resolveFromRepoRoot(repoRoot, configuredValue);
+  }
+
+  const localConfig = readLocalProjectConfig(repoRoot);
+
+  if (localConfig?.dataRoot?.trim()) {
+    return resolveFromRepoRoot(repoRoot, localConfig.dataRoot.trim());
+  }
+
+  return path.resolve(repoRoot, "..", `${path.basename(repoRoot)}-local`);
+}
+
+export function getLocalProjectConfigPath() {
+  return path.resolve(resolveProjectRoot(), "local/project-paths.json");
 }
