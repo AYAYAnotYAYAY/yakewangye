@@ -8,6 +8,7 @@ import { SectionRenderer } from "../components/section-renderer";
 import { ChatWidget } from "./components/chat-widget";
 import { fetchContent, resolveAssetUrl } from "./lib/api";
 import { AdminPage } from "./pages/admin-page";
+import { MobileMediaPage } from "./pages/mobile-media-page";
 
 const CONTENT_CACHE_KEY = "quanyu_cached_content";
 
@@ -405,7 +406,11 @@ export function App() {
     return <AdminPage content={content} onSaved={setContent} />;
   }
 
-  if (loading && pathname !== "/admin") {
+  if (pathname === "/admin/album") {
+    return <MobileMediaPage />;
+  }
+
+  if (loading && pathname !== "/admin" && pathname !== "/admin/album") {
     return (
       <PageShell content={content}>
         <section>

@@ -18,6 +18,7 @@ async function bootstrap() {
 
   const app = Fastify({
     logger: true,
+    bodyLimit: uploadMaxFileSizeMb * 1024 * 1024,
   });
 
   await app.register(cors, {
