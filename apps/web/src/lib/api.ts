@@ -280,36 +280,68 @@ export async function uploadFile(
   });
 
   return new Promise<{ ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState }>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    const requestUrl = buildRequestUrl(runtimeApiBaseUrl ?? API_BASE_URL, requestPath);
+    const candidates = getApiBaseCandidates();
+    let candidateIndex = 0;
+    let settled = false;
 
-    xhr.open("POST", requestUrl);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    const attemptUpload = () => {
+      const base = candidates[candidateIndex];
+      const xhr = new XMLHttpRequest();
+      const requestUrl = buildRequestUrl(base, requestPath);
 
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable) {
-        options?.onProgress?.(Math.round((event.loaded / event.total) * 100));
-      }
-    };
+      xhr.open("POST", requestUrl);
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
 
-    xhr.onerror = () => reject(new Error("upload_network_error"));
-    xhr.onload = () => {
-      try {
-        const payload = (JSON.parse(xhr.responseText || "null") ?? null) as { error?: string; maxSizeMb?: number } | null;
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          options?.onProgress?.(Math.round((event.loaded / event.total) * 100));
+        }
+      };
 
-        if (xhr.status < 200 || xhr.status >= 300) {
-          reject(new Error(getUploadErrorMessage(payload, xhr)));
+      xhr.onerror = () => {
+        if (settled) {
           return;
         }
 
-        options?.onProgress?.(100);
-        resolve(payload as { ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState });
-      } catch {
-        reject(new Error(getUploadErrorMessage(null, xhr)));
-      }
+        candidateIndex += 1;
+
+        if (candidateIndex < candidates.length) {
+          attemptUpload();
+          return;
+        }
+
+        settled = true;
+        reject(new Error("upload_network_error"));
+      };
+
+      xhr.onload = () => {
+        if (settled) {
+          return;
+        }
+
+        try {
+          const payload = (JSON.parse(xhr.responseText || "null") ?? null) as { error?: string; maxSizeMb?: number } | null;
+
+          if (xhr.status < 200 || xhr.status >= 300) {
+            settled = true;
+            reject(new Error(getUploadErrorMessage(payload, xhr)));
+            return;
+          }
+
+          runtimeApiBaseUrl = base;
+          options?.onProgress?.(100);
+          settled = true;
+          resolve(payload as { ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState });
+        } catch {
+          settled = true;
+          reject(new Error(getUploadErrorMessage(null, xhr)));
+        }
+      };
+
+      xhr.send(formData);
     };
 
-    xhr.send(formData);
+    attemptUpload();
   });
 }
 

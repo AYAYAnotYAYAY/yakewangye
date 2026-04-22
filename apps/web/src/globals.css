@@ -1344,16 +1344,17 @@ h1, h2, h3, h4 {
 .admin-modal {
   width: min(100%, 720px);
   max-height: min(82vh, 860px);
-  overflow: hidden;
+  overflow-y: auto;
   padding: 20px;
   box-shadow: 0 28px 80px rgba(10, 19, 34, 0.22);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .admin-upload-dialog {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto;
   gap: 16px;
-  min-height: 0;
 }
 
 .admin-upload-dialog-handle {
@@ -1365,11 +1366,8 @@ h1, h2, h3, h4 {
 }
 
 .admin-upload-dialog .admin-upload-queue-list {
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 4px;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .admin-upload-dialog-actions {
@@ -2069,6 +2067,7 @@ h1, h2, h3, h4 {
   .admin-modal-backdrop {
     place-items: end stretch;
     padding: 0;
+    overflow-y: auto;
   }
 
   .admin-modal {

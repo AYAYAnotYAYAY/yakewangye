@@ -1,6 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
 import { cmsContentSchema } from "@quanyu/shared";
@@ -84,8 +86,35 @@ async function saveUpload(file: MultipartFile, folderPath = "") {
   const ext = path.extname(file.filename || "") || ".bin";
   const fileName = `${Date.now()}-${randomUUID()}${ext}`;
   const filePath = path.join(uploadsDir, fileName);
-  const buffer = await file.toBuffer();
-  await writeFile(filePath, buffer);
+  const output = createWriteStream(filePath);
+  let size = 0;
+
+  try {
+    for await (const chunk of file.file) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += buffer.byteLength;
+
+      if (!output.write(buffer)) {
+        await once(output, "drain");
+      }
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      output.end((error?: Error | null) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+
+        resolve();
+      });
+    });
+  } catch (error) {
+    output.destroy();
+    await rm(filePath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+
   const url = `/uploads/${fileName}`;
   const asset = await mediaLibraryRepository.add({
     title: file.filename || fileName,
@@ -95,7 +124,7 @@ async function saveUpload(file: MultipartFile, folderPath = "") {
     url,
     mediaType,
     mimeType: file.mimetype || (mediaType === "video" ? "video/mp4" : "image/jpeg"),
-    size: buffer.byteLength,
+    size,
   });
 
   return {
