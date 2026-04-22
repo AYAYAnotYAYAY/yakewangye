@@ -18,6 +18,8 @@ import { getUploadsDir, readContent, writeContent } from "../../lib/content-stor
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
 import { ensureUploadsStorage } from "../../lib/storage/storage-paths";
 
+const UPLOAD_MAX_FILE_SIZE_MB = Math.max(10, Number(process.env.UPLOAD_MAX_FILE_SIZE_MB ?? 128) || 128);
+
 const uploadQuerySchema = z.object({
   folderPath: z.string().optional(),
 });
@@ -396,16 +398,16 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       return;
     }
 
-    const file = await request.file();
-
-    if (!file) {
-      return reply.status(400).send({
-        ok: false,
-        error: "No file uploaded",
-      });
-    }
-
     try {
+      const file = await request.file();
+
+      if (!file) {
+        return reply.status(400).send({
+          ok: false,
+          error: "no_file_uploaded",
+        });
+      }
+
       const parsedQuery = uploadQuerySchema.safeParse(request.query);
 
       if (!parsedQuery.success) {
@@ -422,6 +424,19 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         library: await mediaLibraryRepository.getState(),
       };
     } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        (error.code === "FST_REQ_FILE_TOO_LARGE" || error.code === "FST_FILES_LIMIT")
+      ) {
+        return reply.status(413).send({
+          ok: false,
+          error: "file_too_large",
+          maxSizeMb: UPLOAD_MAX_FILE_SIZE_MB,
+        });
+      }
+
       if (error instanceof Error && (error.message === "unsupported_media_type" || error.message === "folder_not_found")) {
         return reply.status(400).send({
           ok: false,

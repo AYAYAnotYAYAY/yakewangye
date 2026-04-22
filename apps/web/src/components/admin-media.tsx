@@ -82,6 +82,45 @@ function mediaAcceptValue(mediaFilter: MediaFilter) {
   }
 }
 
+function getUploadStatusLabel(status: UploadQueueItem["status"]) {
+  switch (status) {
+    case "queued":
+      return "等待中";
+    case "uploading":
+      return "上传中";
+    case "success":
+      return "成功";
+    case "error":
+      return "失败";
+  }
+}
+
+function formatUploadErrorMessage(error: string | undefined) {
+  const normalized = (error ?? "").replace(/^Error:\s*/, "").trim();
+
+  if (!normalized) {
+    return "上传失败";
+  }
+
+  if (normalized === "upload_network_error") {
+    return "网络异常，上传请求没有成功发出";
+  }
+
+  if (normalized === "folder_not_found") {
+    return "目标文件夹不存在";
+  }
+
+  if (normalized === "Only image and video uploads are supported") {
+    return "当前只支持图片和视频素材";
+  }
+
+  if (normalized.startsWith("upload_failed_")) {
+    return `上传失败，服务器返回 ${normalized.replace("upload_failed_", "")}`;
+  }
+
+  return normalized;
+}
+
 function AssetPreview(props: {
   src: string;
   alt: string;
@@ -97,34 +136,61 @@ function AssetPreview(props: {
   return <img className={props.className} src={resolvedSrc} alt={props.alt} />;
 }
 
-function UploadQueueList(props: { items: UploadQueueItem[] }) {
-  if (!props.items.length) {
+function UploadQueueDialog(props: { items: UploadQueueItem[]; open: boolean; onClose: () => void }) {
+  if (!props.open || !props.items.length) {
     return null;
   }
 
+  const successCount = props.items.filter((item) => item.status === "success").length;
+  const errorCount = props.items.filter((item) => item.status === "error").length;
+  const finishedCount = successCount + errorCount;
+  const allFinished = finishedCount === props.items.length;
+
   return (
-    <div className="card admin-upload-queue">
-      <div className="admin-upload-queue-head">
-        <h3>上传进度</h3>
-        <div className="entity-note">按选择顺序上传，实时显示成功与失败。</div>
-      </div>
-      <div className="admin-upload-queue-list">
-        {props.items.map((item, index) => (
-          <div key={item.id} className="admin-upload-item">
-            <div className="admin-upload-item-head">
-              <strong>
-                {index + 1}. {item.fileName}
-              </strong>
-              <span className={`admin-upload-status is-${item.status}`}>{item.status}</span>
-            </div>
-            <div className="admin-upload-progress-track">
-              <div className="admin-upload-progress-value" style={{ width: `${item.progress}%` }} />
-            </div>
-            <div className="entity-note">
-              {item.status === "error" ? item.error || "上传失败" : `${item.progress}%`}
-            </div>
+    <div className="admin-modal-backdrop" role="presentation">
+      <div className="card admin-modal admin-upload-dialog" aria-modal="true" role="dialog" aria-labelledby="upload-dialog-title">
+        <div className="admin-upload-queue-head">
+          <div>
+            <h3 id="upload-dialog-title">上传进度</h3>
+            <div className="entity-note">按选择顺序上传，实时显示进度、成功和失败。</div>
           </div>
-        ))}
+          <div className="admin-upload-queue-summary">
+            <strong>
+              {finishedCount}/{props.items.length}
+            </strong>
+            <span className="entity-note">
+              成功 {successCount} / 失败 {errorCount}
+            </span>
+          </div>
+        </div>
+
+        <div className="admin-upload-queue-list">
+          {props.items.map((item, index) => (
+            <div key={item.id} className="admin-upload-item">
+              <div className="admin-upload-item-head">
+                <strong>
+                  {index + 1}. {item.fileName}
+                </strong>
+                <span className={`admin-upload-status is-${item.status}`}>{getUploadStatusLabel(item.status)}</span>
+              </div>
+              <div className="admin-upload-progress-track">
+                <div className="admin-upload-progress-value" style={{ width: `${item.progress}%` }} />
+              </div>
+              <div className="entity-note">
+                {item.status === "error" ? formatUploadErrorMessage(item.error) : item.status === "success" ? "上传完成" : `${item.progress}%`}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="admin-upload-dialog-actions">
+          <div className="entity-note">
+            {allFinished ? "上传已结束，可以关闭这个窗口。" : "上传仍在进行，请等待全部任务结束。"}
+          </div>
+          <button className="button primary" onClick={props.onClose} type="button" disabled={!allFinished}>
+            确定
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -243,7 +309,7 @@ export function MediaField(props: {
                 props.onLibraryChange(result.library);
                 props.onChange(result.asset.url);
               } catch (error) {
-                window.alert(`上传失败: ${String(error)}`);
+                window.alert(`上传失败: ${formatUploadErrorMessage(error instanceof Error ? error.message : String(error))}`);
               } finally {
                 setUploading(false);
                 setUploadProgress(0);
@@ -303,12 +369,26 @@ export function MediaLibraryManager(props: {
   const [currentFolderPath, setCurrentFolderPath] = useState("");
   const [query, setQuery] = useState("");
   const [queueItems, setQueueItems] = useState<UploadQueueItem[]>([]);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
 
   useEffect(() => {
     if (currentFolderPath && !props.library.folders.some((folder) => folder.path === currentFolderPath)) {
       setCurrentFolderPath("");
     }
   }, [currentFolderPath, props.library.folders]);
+
+  useEffect(() => {
+    if (!uploadDialogOpen) {
+      return;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [uploadDialogOpen]);
 
   const childFolders = props.library.folders.filter((folder) => getParentFolderPath(folder.path) === currentFolderPath);
   const keyword = query.trim().toLowerCase();
@@ -436,7 +516,8 @@ export function MediaLibraryManager(props: {
       status: "queued" as const,
     }));
 
-    setQueueItems((current) => [...items, ...current]);
+    setQueueItems(items);
+    setUploadDialogOpen(true);
 
     for (const [index, file] of Array.from(files).entries()) {
       const queueId = items[index].id;
@@ -460,7 +541,7 @@ export function MediaLibraryManager(props: {
               ? {
                   ...item,
                   status: "error",
-                  error: String(error),
+                  error: error instanceof Error ? error.message : String(error),
                 }
               : item,
           ),
@@ -490,6 +571,11 @@ export function MediaLibraryManager(props: {
               }}
             />
           </label>
+          {queueItems.length ? (
+            <button className="button secondary" onClick={() => setUploadDialogOpen(true)} type="button">
+              查看上传进度
+            </button>
+          ) : null}
           <button className="button secondary" onClick={handleCreateFolder} type="button">
             新建文件夹
           </button>
@@ -506,7 +592,7 @@ export function MediaLibraryManager(props: {
         </div>
       </div>
 
-      <UploadQueueList items={queueItems} />
+      <UploadQueueDialog items={queueItems} open={uploadDialogOpen} onClose={() => setUploadDialogOpen(false)} />
 
       <div className="admin-media-workspace">
         <FolderTree folders={props.library.folders} currentFolderPath={currentFolderPath} onChange={setCurrentFolderPath} />

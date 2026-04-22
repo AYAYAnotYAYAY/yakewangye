@@ -48,6 +48,19 @@ type TabKey =
   | "media"
   | "pages";
 
+const ADMIN_TABS: Array<[TabKey, string]> = [
+  ["site", "站点设置"],
+  ["ai", "AI 配置"],
+  ["home", "首页"],
+  ["articles", "文章"],
+  ["doctors", "医生"],
+  ["services", "服务"],
+  ["pricing", "价格"],
+  ["gallery", "图册视频"],
+  ["media", "素材库"],
+  ["pages", "自定义页"],
+];
+
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -275,27 +288,28 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
 
       <div className="admin-layout">
         <aside className="card admin-sidebar">
-          {[
-            ["site", "站点设置"],
-            ["ai", "AI 配置"],
-            ["home", "首页"],
-            ["articles", "文章"],
-            ["doctors", "医生"],
-            ["services", "服务"],
-            ["pricing", "价格"],
-            ["gallery", "图册视频"],
-            ["media", "素材库"],
-            ["pages", "自定义页"],
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              className={`admin-nav-item ${activeTab === key ? "active" : ""}`}
-              onClick={() => setActiveTab(key as TabKey)}
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
+          <label className="admin-tab-select">
+            <span>当前模块</span>
+            <select value={activeTab} onChange={(event) => setActiveTab(event.target.value as TabKey)}>
+              {ADMIN_TABS.map(([key, label]) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="admin-sidebar-grid">
+            {ADMIN_TABS.map(([key, label]) => (
+              <button
+                key={key}
+                className={`admin-nav-item ${activeTab === key ? "active" : ""}`}
+                onClick={() => setActiveTab(key)}
+                type="button"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </aside>
 
         <section className="admin-content">

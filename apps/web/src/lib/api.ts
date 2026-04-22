@@ -135,6 +135,30 @@ async function parseErrorMessage(response: Response, fallback: string) {
   return errorPayload?.error || fallback;
 }
 
+function getUploadErrorMessage(payload: { error?: string; maxSizeMb?: number } | null, xhr: XMLHttpRequest) {
+  if (payload?.error === "file_too_large") {
+    return `文件过大，单个文件请不要超过 ${payload.maxSizeMb ?? 128} MB`;
+  }
+
+  if (payload?.error === "no_file_uploaded") {
+    return "没有检测到要上传的文件";
+  }
+
+  if (payload?.error) {
+    return payload.error;
+  }
+
+  if (xhr.status === 413) {
+    return "文件过大，上传请求被服务器拒绝";
+  }
+
+  if (xhr.status === 415) {
+    return "当前只支持图片和视频素材";
+  }
+
+  return `upload_failed_${xhr.status || "unknown"}`;
+}
+
 export async function loginAdmin(payload: { username: string; password: string }) {
   const response = await fetchWithFallback("/api/admin/login", {
     method: "POST",
@@ -271,17 +295,17 @@ export async function uploadFile(
     xhr.onerror = () => reject(new Error("upload_network_error"));
     xhr.onload = () => {
       try {
-        const payload = JSON.parse(xhr.responseText) as { error?: string };
+        const payload = (JSON.parse(xhr.responseText || "null") ?? null) as { error?: string; maxSizeMb?: number } | null;
 
         if (xhr.status < 200 || xhr.status >= 300) {
-          reject(new Error(payload.error || "upload_failed"));
+          reject(new Error(getUploadErrorMessage(payload, xhr)));
           return;
         }
 
         options?.onProgress?.(100);
         resolve(payload as { ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState });
       } catch {
-        reject(new Error("upload_failed"));
+        reject(new Error(getUploadErrorMessage(null, xhr)));
       }
     };
 

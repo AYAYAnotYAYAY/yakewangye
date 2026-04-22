@@ -438,6 +438,7 @@ server {
 
     root ${WEB_ROOT};
     index index.html;
+    client_max_body_size 128m;
 
     location / {
         try_files \$uri \$uri/ /index.html;
@@ -490,6 +491,7 @@ server {
 
     root ${WEB_ROOT};
     index index.html;
+    client_max_body_size 128m;
 
     location / {
         try_files \$uri \$uri/ /index.html;
