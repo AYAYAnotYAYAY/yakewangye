@@ -19,11 +19,11 @@ const legacyUploadsDir = path.resolve(repoRoot, "apps/api/uploads");
 
 const videoExtensions = new Set([".mp4", ".mov", ".m4v", ".webm", ".ogg", ".ogv"]);
 
-function inferMediaTypeFromFileName(fileName: string): "image" | "video" {
+export function inferMediaTypeFromFileName(fileName: string): "image" | "video" {
   return videoExtensions.has(path.extname(fileName).toLowerCase()) ? "video" : "image";
 }
 
-function inferMimeTypeFromFileName(fileName: string) {
+export function inferMimeTypeFromFileName(fileName: string) {
   const ext = path.extname(fileName).toLowerCase();
 
   switch (ext) {
@@ -38,6 +38,12 @@ function inferMimeTypeFromFileName(fileName: string) {
       return "image/webp";
     case ".svg":
       return "image/svg+xml";
+    case ".avif":
+      return "image/avif";
+    case ".heic":
+      return "image/heic";
+    case ".heif":
+      return "image/heif";
     case ".mp4":
       return "video/mp4";
     case ".mov":

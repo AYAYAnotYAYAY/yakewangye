@@ -18,7 +18,7 @@ import {
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
-import { ensureUploadsStorage } from "../../lib/storage/storage-paths";
+import { ensureUploadsStorage, inferMimeTypeFromFileName } from "../../lib/storage/storage-paths";
 
 const UPLOAD_MAX_FILE_SIZE_MB = Math.max(10, Number(process.env.UPLOAD_MAX_FILE_SIZE_MB ?? 128) || 128);
 
@@ -47,20 +47,57 @@ const copyFolderSchema = z.object({
   newName: z.string().trim().min(1),
 });
 
+const supportedImageExtensions = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".heic", ".heif"]);
+const supportedVideoExtensions = new Set([".mp4", ".mov", ".m4v", ".webm", ".ogg", ".ogv"]);
+
 function resolveMediaType(mimeType: string | undefined): "image" | "video" | null {
-  if (!mimeType) {
-    return null;
+  const normalized = mimeType?.trim().toLowerCase();
+
+  if (normalized && normalized !== "application/octet-stream") {
+    if (normalized.startsWith("image/")) {
+      return "image";
+    }
+
+    if (normalized.startsWith("video/")) {
+      return "video";
+    }
   }
 
-  if (mimeType.startsWith("image/")) {
+  return null;
+}
+
+function resolveMediaTypeFromUpload(mimeType: string | undefined, fileName: string | undefined): "image" | "video" | null {
+  const byMime = resolveMediaType(mimeType);
+
+  if (byMime) {
+    return byMime;
+  }
+
+  const ext = path.extname(fileName ?? "").toLowerCase();
+
+  if (supportedImageExtensions.has(ext)) {
     return "image";
   }
 
-  if (mimeType.startsWith("video/")) {
+  if (supportedVideoExtensions.has(ext)) {
     return "video";
   }
 
   return null;
+}
+
+function resolveUploadMimeType(mimeType: string | undefined, fileName: string | undefined, mediaType: "image" | "video") {
+  const normalized = mimeType?.trim().toLowerCase();
+
+  if (normalized && normalized !== "application/octet-stream") {
+    return normalized;
+  }
+
+  if (fileName) {
+    return inferMimeTypeFromFileName(fileName);
+  }
+
+  return mediaType === "video" ? "video/mp4" : "image/jpeg";
 }
 
 function parseAssetId(request: FastifyRequest) {
@@ -74,7 +111,7 @@ function parseAssetId(request: FastifyRequest) {
 }
 
 async function saveUpload(file: MultipartFile, folderPath = "") {
-  const mediaType = resolveMediaType(file.mimetype);
+  const mediaType = resolveMediaTypeFromUpload(file.mimetype, file.filename);
 
   if (!mediaType) {
     throw new Error("unsupported_media_type");
@@ -123,7 +160,7 @@ async function saveUpload(file: MultipartFile, folderPath = "") {
     folderPath,
     url,
     mediaType,
-    mimeType: file.mimetype || (mediaType === "video" ? "video/mp4" : "image/jpeg"),
+    mimeType: resolveUploadMimeType(file.mimetype, file.filename, mediaType),
     size,
   });
 

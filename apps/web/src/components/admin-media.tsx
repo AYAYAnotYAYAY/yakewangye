@@ -74,11 +74,11 @@ function buildFolderOptions(folders: MediaLibraryFolder[]) {
 function mediaAcceptValue(mediaFilter: MediaFilter) {
   switch (mediaFilter) {
     case "video":
-      return "video/*";
+      return "video/*,.mov,.m4v,.mp4,.webm";
     case "all":
-      return "image/*,video/*";
+      return "image/*,.heic,.heif,.avif,video/*,.mov,.m4v,.mp4,.webm";
     default:
-      return "image/*";
+      return "image/*,.heic,.heif,.avif";
   }
 }
 
@@ -136,8 +136,48 @@ function AssetPreview(props: {
   return <img className={props.className} src={resolvedSrc} alt={props.alt} />;
 }
 
-function UploadQueueDialog(props: { items: UploadQueueItem[]; open: boolean; onClose: () => void }) {
-  if (!props.open || !props.items.length) {
+function UploadButton(props: {
+  label: string;
+  accept: string;
+  multiple?: boolean;
+  disabled?: boolean;
+  className?: string;
+  onFiles: (files: File[]) => void | Promise<void>;
+}) {
+  return (
+    <label
+      className={`button ${props.className ?? ""} admin-upload-trigger ${props.disabled ? "is-disabled" : ""}`.trim()}
+      aria-disabled={props.disabled}
+    >
+      <span>{props.label}</span>
+      <input
+        className="admin-upload-input"
+        type="file"
+        accept={props.accept}
+        multiple={props.multiple}
+        disabled={props.disabled}
+        onChange={(event) => {
+          const files = Array.from(event.currentTarget.files ?? []);
+          event.currentTarget.value = "";
+
+          if (!files.length) {
+            return;
+          }
+
+          void props.onFiles(files);
+        }}
+      />
+    </label>
+  );
+}
+
+function UploadQueuePanel(props: {
+  items: UploadQueueItem[];
+  open: boolean;
+  onToggle: () => void;
+  onClear: () => void;
+}) {
+  if (!props.items.length) {
     return null;
   }
 
@@ -145,33 +185,105 @@ function UploadQueueDialog(props: { items: UploadQueueItem[]; open: boolean; onC
   const errorCount = props.items.filter((item) => item.status === "error").length;
   const finishedCount = successCount + errorCount;
   const allFinished = finishedCount === props.items.length;
+  const activeItem =
+    props.items.find((item) => item.status === "uploading") ??
+    props.items.find((item) => item.status === "queued") ??
+    props.items[props.items.length - 1] ??
+    null;
+  const overallProgress = Math.round(
+    props.items.reduce((sum, item) => sum + (item.status === "success" || item.status === "error" ? 100 : item.progress), 0) /
+      props.items.length,
+  );
+  const headerTitle = allFinished ? (errorCount ? "上传结束，存在失败项" : "全部上传完成") : "上传进行中";
+  const headerNote = allFinished
+    ? `成功 ${successCount} 个，失败 ${errorCount} 个。`
+    : activeItem
+      ? `当前文件：${activeItem.fileName}`
+      : "上传队列准备中";
+  const highlightMessage =
+    activeItem?.status === "error"
+      ? formatUploadErrorMessage(activeItem.error)
+      : activeItem?.status === "success"
+        ? "上传完成，已经加入素材库。"
+        : activeItem
+          ? `${activeItem.progress}%`
+          : "等待上传";
+
+  if (!props.open) {
+    return (
+      <div className="admin-upload-hub" aria-live="polite">
+        <button className="card admin-upload-peek" onClick={props.onToggle} type="button">
+          <div className="admin-upload-peek-top">
+            <strong>{headerTitle}</strong>
+            <span className={`admin-upload-status is-${allFinished ? (errorCount ? "error" : "success") : "uploading"}`}>
+              {finishedCount}/{props.items.length}
+            </span>
+          </div>
+          <div className="entity-note">{headerNote}</div>
+          <div className="admin-upload-overview-meter" aria-hidden="true">
+            <span style={{ width: `${overallProgress}%` }} />
+          </div>
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="admin-modal-backdrop" role="presentation">
-      <div className="card admin-modal admin-upload-dialog" aria-modal="true" role="dialog" aria-labelledby="upload-dialog-title">
-        <div className="admin-upload-dialog-handle" aria-hidden="true" />
-        <div className="admin-upload-queue-head">
+    <div className="admin-upload-hub" aria-live="polite">
+      <section className="card admin-upload-center" role="status" aria-labelledby="upload-center-title">
+        <div className="admin-upload-center-head">
           <div>
-            <h3 id="upload-dialog-title">上传进度</h3>
-            <div className="entity-note">按选择顺序上传，实时显示进度、成功和失败。</div>
+            <h3 id="upload-center-title">上传中心</h3>
+            <div className="entity-note">上传在后台继续进行，你可以继续整理素材和编辑内容。</div>
           </div>
-          <div className="admin-upload-queue-summary">
-            <strong>
-              {finishedCount}/{props.items.length}
-            </strong>
-            <span className="entity-note">
-              成功 {successCount} / 失败 {errorCount}
-            </span>
+          <div className="admin-upload-center-head-actions">
+            {allFinished ? (
+              <button className="button secondary" onClick={props.onClear} type="button">
+                清空记录
+              </button>
+            ) : null}
+            <button className="button secondary" onClick={props.onToggle} type="button">
+              收起
+            </button>
           </div>
         </div>
 
-        <div className="admin-upload-queue-list">
+        <div className="admin-upload-overview">
+          <div className="admin-upload-overview-copy">
+            <strong>{headerTitle}</strong>
+            <span>{headerNote}</span>
+          </div>
+          <div className="admin-upload-overview-stats">
+            <strong>{overallProgress}%</strong>
+            <span>
+              成功 {successCount} / 失败 {errorCount}
+            </span>
+          </div>
+          <div className="admin-upload-overview-meter" aria-hidden="true">
+            <span style={{ width: `${overallProgress}%` }} />
+          </div>
+        </div>
+
+        {activeItem ? (
+          <div className={`admin-upload-highlight is-${activeItem.status}`}>
+            <div className="admin-upload-highlight-label">当前状态</div>
+            <strong>{activeItem.fileName}</strong>
+            <div className="entity-note">
+              {getUploadStatusLabel(activeItem.status)} · {highlightMessage}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="admin-upload-center-list">
           {props.items.map((item, index) => (
-            <div key={item.id} className="admin-upload-item">
+            <div key={item.id} className={`admin-upload-item ${item.id === activeItem?.id ? "is-current" : ""}`}>
               <div className="admin-upload-item-head">
-                <strong>
-                  {index + 1}. {item.fileName}
-                </strong>
+                <div className="admin-upload-item-title">
+                  <span className={`admin-upload-item-dot is-${item.status}`} aria-hidden="true" />
+                  <strong>
+                    {index + 1}. {item.fileName}
+                  </strong>
+                </div>
                 <span className={`admin-upload-status is-${item.status}`}>{getUploadStatusLabel(item.status)}</span>
               </div>
               <div className="admin-upload-progress-track">
@@ -183,16 +295,7 @@ function UploadQueueDialog(props: { items: UploadQueueItem[]; open: boolean; onC
             </div>
           ))}
         </div>
-
-        <div className="admin-upload-dialog-actions">
-          <div className="entity-note">
-            {allFinished ? "上传已结束，可以关闭这个窗口。" : "上传仍在进行，请等待全部任务结束。"}
-          </div>
-          <button className="button primary" onClick={props.onClose} type="button" disabled={!allFinished}>
-            确定
-          </button>
-        </div>
-      </div>
+      </section>
     </div>
   );
 }
@@ -288,37 +391,34 @@ export function MediaField(props: {
         <input value={props.value} onChange={(event) => props.onChange(event.target.value)} />
       </label>
       <div className="admin-media-actions">
-        <label className="button secondary admin-upload-btn">
-          {uploading ? `上传中 ${uploadProgress}%` : "本地上传"}
-          <input
-            type="file"
-            accept={mediaAcceptValue(mediaFilter)}
-            style={{ display: "none" }}
-            onChange={async (event) => {
-              const file = event.target.files?.[0];
+        <UploadButton
+          label={uploading ? `上传中 ${uploadProgress}%` : "本地上传"}
+          accept={mediaAcceptValue(mediaFilter)}
+          disabled={uploading}
+          className="secondary admin-upload-btn"
+          onFiles={async (files) => {
+            const file = files[0];
 
-              if (!file) {
-                return;
-              }
+            if (!file) {
+              return;
+            }
 
-              setUploading(true);
+            setUploading(true);
+            setUploadProgress(0);
+            try {
+              const result = await uploadFile(file, props.adminToken, {
+                onProgress: setUploadProgress,
+              });
+              props.onLibraryChange(result.library);
+              props.onChange(result.asset.url);
+            } catch (error) {
+              window.alert(`上传失败: ${formatUploadErrorMessage(error instanceof Error ? error.message : String(error))}`);
+            } finally {
+              setUploading(false);
               setUploadProgress(0);
-              try {
-                const result = await uploadFile(file, props.adminToken, {
-                  onProgress: setUploadProgress,
-                });
-                props.onLibraryChange(result.library);
-                props.onChange(result.asset.url);
-              } catch (error) {
-                window.alert(`上传失败: ${formatUploadErrorMessage(error instanceof Error ? error.message : String(error))}`);
-              } finally {
-                setUploading(false);
-                setUploadProgress(0);
-                event.target.value = "";
-              }
-            }}
-          />
-        </label>
+            }
+          }}
+        />
         <button className="button secondary" onClick={() => setPickerOpen((current) => !current)} type="button">
           {pickerOpen ? "收起素材库" : "从素材库选择"}
         </button>
@@ -370,26 +470,13 @@ export function MediaLibraryManager(props: {
   const [currentFolderPath, setCurrentFolderPath] = useState("");
   const [query, setQuery] = useState("");
   const [queueItems, setQueueItems] = useState<UploadQueueItem[]>([]);
-  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
 
   useEffect(() => {
     if (currentFolderPath && !props.library.folders.some((folder) => folder.path === currentFolderPath)) {
       setCurrentFolderPath("");
     }
   }, [currentFolderPath, props.library.folders]);
-
-  useEffect(() => {
-    if (!uploadDialogOpen) {
-      return;
-    }
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [uploadDialogOpen]);
 
   const childFolders = props.library.folders.filter((folder) => getParentFolderPath(folder.path) === currentFolderPath);
   const keyword = query.trim().toLowerCase();
@@ -405,6 +492,8 @@ export function MediaLibraryManager(props: {
     return asset.title.toLowerCase().includes(keyword) || asset.fileName.toLowerCase().includes(keyword);
   });
   const folderOptions = buildFolderOptions(props.library.folders);
+  const hasPendingUploads = queueItems.some((item) => item.status === "queued" || item.status === "uploading");
+  const allUploadsFinished = queueItems.length > 0 && queueItems.every((item) => item.status === "success" || item.status === "error");
 
   async function handleCreateFolder() {
     const name = window.prompt("请输入新文件夹名称");
@@ -505,12 +594,12 @@ export function MediaLibraryManager(props: {
     }
   }
 
-  async function handleBatchUpload(files: FileList | null) {
-    if (!files?.length) {
+  async function handleBatchUpload(files: File[]) {
+    if (!files.length) {
       return;
     }
 
-    const items = Array.from(files).map((file, index) => ({
+    const items = files.map((file, index) => ({
       id: `${Date.now()}-${index}-${file.name}`,
       fileName: file.name,
       progress: 0,
@@ -518,9 +607,9 @@ export function MediaLibraryManager(props: {
     }));
 
     setQueueItems(items);
-    setUploadDialogOpen(true);
+    setUploadPanelOpen(true);
 
-    for (const [index, file] of Array.from(files).entries()) {
+    for (const [index, file] of files.entries()) {
       const queueId = items[index].id;
 
       setQueueItems((current) => current.map((item) => (item.id === queueId ? { ...item, status: "uploading", progress: 0 } : item)));
@@ -559,24 +648,14 @@ export function MediaLibraryManager(props: {
           <p className="entity-note">支持文件夹管理、批量上传、重命名、删除和素材移动。文件夹调整不会破坏已引用的素材地址。</p>
         </div>
         <div className="admin-media-toolbar-actions">
-          <label className="button primary admin-upload-btn">
-            批量上传
-            <input
-              type="file"
-              multiple
-              accept="image/*,video/*"
-              style={{ display: "none" }}
-              onChange={async (event) => {
-                await handleBatchUpload(event.target.files);
-                event.target.value = "";
-              }}
-            />
-          </label>
-          {queueItems.length ? (
-            <button className="button secondary" onClick={() => setUploadDialogOpen(true)} type="button">
-              查看上传进度
-            </button>
-          ) : null}
+          <UploadButton
+            label={hasPendingUploads ? "上传进行中" : "批量上传"}
+            accept={mediaAcceptValue("all")}
+            multiple
+            disabled={hasPendingUploads}
+            className="primary admin-upload-btn"
+            onFiles={handleBatchUpload}
+          />
           <button className="button secondary" onClick={handleCreateFolder} type="button">
             新建文件夹
           </button>
@@ -593,7 +672,19 @@ export function MediaLibraryManager(props: {
         </div>
       </div>
 
-      <UploadQueueDialog items={queueItems} open={uploadDialogOpen} onClose={() => setUploadDialogOpen(false)} />
+      <UploadQueuePanel
+        items={queueItems}
+        open={uploadPanelOpen}
+        onToggle={() => setUploadPanelOpen((current) => !current)}
+        onClear={() => {
+          if (!allUploadsFinished) {
+            return;
+          }
+
+          setQueueItems([]);
+          setUploadPanelOpen(false);
+        }}
+      />
 
       <div className="admin-media-workspace">
         <FolderTree folders={props.library.folders} currentFolderPath={currentFolderPath} onChange={setCurrentFolderPath} />
