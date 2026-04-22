@@ -2,13 +2,32 @@ import type { MediaLibraryAsset } from "@quanyu/shared";
 import { useEffect, useState } from "react";
 import { ADMIN_TOKEN_STORAGE_KEY, deleteMediaAsset, fetchMediaLibrary, resolveAssetUrl, uploadFile } from "../lib/api";
 
+type UploadQueueItem = {
+  id: string;
+  fileName: string;
+  fileSize: number;
+  uploadedBytes: number;
+  progress: number;
+  status: "queued" | "uploading" | "success" | "error";
+  error?: string;
+  thumbnailUrl?: string;
+  file?: File;
+};
+
+function formatFileSize(size: number) {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  if (size >= 1024) return `${Math.round(size / 1024)} KB`;
+  return `${size} B`;
+}
+
 export function MobileMediaPage() {
   const [token, setToken] = useState("");
   const [assets, setAssets] = useState<MediaLibraryAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  
+  const [queueItems, setQueueItems] = useState<UploadQueueItem[]>([]);
+  const [showUploadList, setShowUploadList] = useState(false);
   const [previewAsset, setPreviewAsset] = useState<MediaLibraryAsset | null>(null);
 
   useEffect(() => {
@@ -42,29 +61,54 @@ export function MobileMediaPage() {
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0 || !token) return;
 
-    setUploading(true);
-    setUploadProgress(0);
-
     const fileArray = Array.from(files);
-    for (let i = 0; i < fileArray.length; i++) {
-      const file = fileArray[i];
+    const newItems = fileArray.map((file, index) => ({
+      id: `${Date.now()}-${index}-${file.name}`,
+      fileName: file.name,
+      fileSize: file.size,
+      uploadedBytes: 0,
+      progress: 0,
+      status: "queued" as const,
+      thumbnailUrl: URL.createObjectURL(file),
+      file: file,
+    }));
+
+    // 将新选的文件加入队列，显示抽屉
+    setQueueItems(current => [...current, ...newItems]);
+    setShowUploadList(true);
+
+    let hasSuccess = false;
+
+    for (const item of newItems) {
+      const queueId = item.id;
+      const file = item.file!;
+
+      setQueueItems((current) => current.map((i) => (i.id === queueId ? { ...i, status: "uploading", progress: 0 } : i)));
+
       try {
         await uploadFile(file, token, {
-          onProgress: (p) => {
-            // 计算整体进度的大致比例
-            const baseProgress = (i / fileArray.length) * 100;
-            const currentProgress = (p / 100) * (100 / fileArray.length);
-            setUploadProgress(Math.round(baseProgress + currentProgress));
+          onProgress: (progress) => {
+            setQueueItems((current) => current.map((i) => (i.id === queueId ? { ...i, progress } : i)));
+          },
+          onTransferredBytes: (uploadedBytes) => {
+            setQueueItems((current) => current.map((i) => (i.id === queueId ? { ...i, uploadedBytes } : i)));
           },
         });
-      } catch (err) {
-        window.alert(`文件 ${file.name} 上传失败: ${String(err)}`);
+        
+        hasSuccess = true;
+        setQueueItems((current) => current.map((i) => (i.id === queueId ? { ...i, status: "success", progress: 100 } : i)));
+      } catch (uploadError) {
+        setQueueItems((current) => current.map((i) => (i.id === queueId ? { 
+          ...i, 
+          status: "error", 
+          error: uploadError instanceof Error ? uploadError.message : String(uploadError) 
+        } : i)));
       }
     }
 
-    setUploading(false);
-    setUploadProgress(0);
-    loadLibrary(token);
+    if (hasSuccess) {
+      loadLibrary(token);
+    }
   }
 
   async function handleDelete(asset: MediaLibraryAsset) {
@@ -78,7 +122,9 @@ export function MobileMediaPage() {
     }
   }
 
-  if (loading) {
+  const isUploading = queueItems.some(item => item.status === "uploading" || item.status === "queued");
+
+  if (loading && assets.length === 0) {
     return (
       <div style={{ padding: "20px", textAlign: "center", color: "#666" }}>
         加载中...
@@ -86,7 +132,7 @@ export function MobileMediaPage() {
     );
   }
 
-  if (error) {
+  if (error && assets.length === 0) {
     return (
       <div style={{ padding: "40px 20px", textAlign: "center" }}>
         <p style={{ color: "red", marginBottom: "20px" }}>{error}</p>
@@ -103,7 +149,17 @@ export function MobileMediaPage() {
         boxShadow: "0 1px 3px rgba(0,0,0,0.05)", zIndex: 10, display: "flex", justifyContent: "space-between", alignItems: "center"
       }}>
         <h1 style={{ margin: 0, fontSize: "18px", fontWeight: "600" }}>我的相册</h1>
-        <a href="/admin" style={{ fontSize: "14px", color: "#666", textDecoration: "none" }}>返回后台</a>
+        <div style={{ display: "flex", gap: "15px", alignItems: "center" }}>
+          {queueItems.length > 0 && (
+            <button 
+              onClick={() => setShowUploadList(true)}
+              style={{ background: "none", border: "none", color: "#1677ff", fontSize: "14px", padding: 0 }}
+            >
+              {isUploading ? "正在上传" : "上传记录"}
+            </button>
+          )}
+          <a href="/admin" style={{ fontSize: "14px", color: "#666", textDecoration: "none" }}>返回后台</a>
+        </div>
       </div>
 
       {/* 相册网格 */}
@@ -137,6 +193,7 @@ export function MobileMediaPage() {
                   src={resolveAssetUrl(asset.url)}
                   alt={asset.title}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  loading="lazy"
                 />
               )}
               {asset.mediaType === "video" && (
@@ -162,25 +219,79 @@ export function MobileMediaPage() {
           backgroundColor: "#000", color: "#fff", padding: "12px 30px",
           borderRadius: "30px", fontSize: "16px", fontWeight: "500",
           boxShadow: "0 4px 12px rgba(0,0,0,0.15)", display: "flex", alignItems: "center", gap: "8px",
-          cursor: "pointer", opacity: uploading ? 0.7 : 1, pointerEvents: uploading ? "none" : "auto"
+          cursor: "pointer"
         }}>
-          {uploading ? (
-            <span>上传中 {uploadProgress}%</span>
-          ) : (
-            <>
-              <span style={{ fontSize: "20px", lineHeight: 1 }}>+</span>
-              <span>上传素材</span>
-            </>
-          )}
+          <span style={{ fontSize: "20px", lineHeight: 1 }}>+</span>
+          <span>上传素材</span>
           <input
             type="file"
             multiple
             accept="image/*,video/*"
             style={{ display: "none" }}
-            onChange={(e) => handleFiles(e.target.files)}
+            onChange={(e) => {
+              handleFiles(e.target.files);
+              e.target.value = '';
+            }}
           />
         </label>
       </div>
+
+      {/* 上传进度抽屉面板 */}
+      {showUploadList && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: "rgba(0,0,0,0.5)", zIndex: 50, display: "flex", flexDirection: "column",
+          justifyContent: "flex-end"
+        }}>
+          {/* 点击背景可收起 */}
+          <div style={{ flex: 1 }} onClick={() => setShowUploadList(false)} />
+          
+          <div style={{
+            backgroundColor: "#fff", borderTopLeftRadius: "16px", borderTopRightRadius: "16px",
+            maxHeight: "80vh", display: "flex", flexDirection: "column"
+          }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h3 style={{ margin: 0, fontSize: "16px" }}>上传列表</h3>
+              <button onClick={() => setShowUploadList(false)} style={{ background: "none", border: "none", color: "#666", padding: "5px", fontSize: "14px" }}>收起</button>
+            </div>
+            
+            <div style={{ padding: "0 20px", overflowY: "auto", flex: 1 }}>
+              {queueItems.length === 0 ? (
+                <div style={{ padding: "30px 0", textAlign: "center", color: "#999", fontSize: "14px" }}>暂无记录</div>
+              ) : (
+                queueItems.map(item => (
+                  <div key={item.id} style={{ display: "flex", padding: "12px 0", borderBottom: "1px solid #f5f5f5" }}>
+                    <img src={item.thumbnailUrl} alt={item.fileName} style={{ width: "48px", height: "48px", objectFit: "cover", borderRadius: "6px", backgroundColor: "#eee" }} />
+                    <div style={{ marginLeft: "12px", flex: 1, minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                      <div style={{ fontSize: "14px", fontWeight: "500", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "#333" }}>{item.fileName}</div>
+                      <div style={{ fontSize: "12px", color: "#999", marginTop: "4px", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
+                        <span>{formatFileSize(item.uploadedBytes)} / {formatFileSize(item.fileSize)}</span>
+                        {item.status === "uploading" && <span style={{ color: "#1677ff", fontWeight: "500" }}>{item.progress}%</span>}
+                        {item.status === "success" && <span style={{ color: "#52c41a", fontWeight: "500" }}>完成</span>}
+                        {item.status === "error" && <span style={{ color: "#ff4d4f", fontWeight: "500", wordBreak: "break-all" }}>失败: {item.error}</span>}
+                      </div>
+                      {(item.status === "uploading" || item.status === "queued" || item.status === "error") && (
+                        <div style={{ height: "4px", backgroundColor: "#eee", borderRadius: "2px", marginTop: "6px", overflow: "hidden" }}>
+                          <div style={{ height: "100%", backgroundColor: item.status === "error" ? "#ff4d4f" : "#1677ff", width: `${item.progress}%`, transition: "width 0.2s" }} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            
+            <div style={{ padding: "12px 20px", paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}>
+              <button 
+                onClick={() => { setQueueItems([]); setShowUploadList(false); }} 
+                style={{ width: "100%", padding: "12px", backgroundColor: "#f5f5f5", border: "none", borderRadius: "8px", fontSize: "15px", color: "#666" }}
+              >
+                清空记录
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 图片/视频大图预览模态框 */}
       {previewAsset && (
@@ -212,6 +323,7 @@ export function MobileMediaPage() {
                 src={resolveAssetUrl(previewAsset.url)}
                 controls
                 autoPlay
+                playsInline
                 style={{ maxWidth: "100%", maxHeight: "100%" }}
               />
             ) : (
