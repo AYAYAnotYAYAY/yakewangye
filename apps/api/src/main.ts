@@ -13,7 +13,8 @@ import { ensureAllLocalStorage } from "./lib/storage/storage-paths";
 
 async function bootstrap() {
   await ensureAllLocalStorage();
-  const uploadMaxFileSizeMb = Math.max(10, Number(process.env.UPLOAD_MAX_FILE_SIZE_MB ?? 128) || 128);
+  const uploadMaxFileSizeMb = Math.max(10, Number(process.env.UPLOAD_MAX_FILE_SIZE_MB ?? 1024) || 1024);
+  const uploadChunkSizeMb = Math.max(1, Number(process.env.UPLOAD_CHUNK_SIZE_MB ?? 8) || 8);
 
   const app = Fastify({
     logger: true,
@@ -28,6 +29,17 @@ async function bootstrap() {
       fileSize: uploadMaxFileSizeMb * 1024 * 1024,
     },
   });
+
+  app.addContentTypeParser(
+    "application/octet-stream",
+    {
+      parseAs: "buffer",
+      bodyLimit: uploadChunkSizeMb * 1024 * 1024,
+    },
+    (_request, body, done) => {
+      done(null, body);
+    },
+  );
 
   await app.register(fastifyStatic, {
     root: getUploadsDir(),

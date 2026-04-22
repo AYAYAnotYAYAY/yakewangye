@@ -69,6 +69,8 @@ export function getLocalStoragePaths() {
     adminConfigFilePath: path.resolve(dataRoot, "admin-config.json"),
     mediaLibraryFilePath: path.resolve(dataRoot, "media-library.json"),
     uploadsDir: path.resolve(dataRoot, "uploads"),
+    uploadSessionsDir: path.resolve(dataRoot, "upload-sessions"),
+    uploadTempDir: path.resolve(dataRoot, "upload-temp"),
     legacyContentFilePath,
     legacyChatSessionsFilePath,
     legacyAdminConfigFilePath,
@@ -120,6 +122,16 @@ export async function ensureUploadsStorage() {
   }
 
   return uploadsDir;
+}
+
+export async function ensureUploadSessionStorage() {
+  const { uploadSessionsDir, uploadTempDir } = getLocalStoragePaths();
+  await mkdir(uploadSessionsDir, { recursive: true });
+  await mkdir(uploadTempDir, { recursive: true });
+  return {
+    uploadSessionsDir,
+    uploadTempDir,
+  };
 }
 
 async function buildMediaLibrarySeedFromUploads() {
@@ -227,6 +239,7 @@ export async function ensureMediaLibraryStorage() {
 
 export async function ensureAllLocalStorage() {
   await ensureUploadsStorage();
+  await ensureUploadSessionStorage();
   await ensureContentStorage();
   await ensureChatStorage();
   await ensureAdminStorage();

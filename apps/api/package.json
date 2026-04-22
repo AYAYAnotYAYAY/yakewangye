@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "build": "node --max-old-space-size=160 ../../node_modules/typescript/bin/tsc --project tsconfig.build.json",
+    "build": "node --max-old-space-size=1024 ../../node_modules/typescript/bin/tsc --project tsconfig.build.json",
     "start": "node dist/main.js",
-    "lint": "node --max-old-space-size=160 ../../node_modules/typescript/bin/tsc --project tsconfig.json --noEmit",
-    "typecheck": "node --max-old-space-size=160 ../../node_modules/typescript/bin/tsc --project tsconfig.json --noEmit"
+    "lint": "node --max-old-space-size=1024 ../../node_modules/typescript/bin/tsc --project tsconfig.json --noEmit",
+    "typecheck": "node --max-old-space-size=1024 ../../node_modules/typescript/bin/tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.1",

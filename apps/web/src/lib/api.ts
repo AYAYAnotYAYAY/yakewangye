@@ -3,6 +3,10 @@ import type { ChatSession, CmsContent, MediaLibraryAsset, MediaLibraryState } fr
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 export const ADMIN_TOKEN_STORAGE_KEY = "quanyu_admin_token";
 let runtimeApiBaseUrl: string | undefined = API_BASE_URL || undefined;
+const MAX_MEDIA_UPLOAD_SIZE_MB = 1024;
+const MAX_MEDIA_UPLOAD_SIZE_BYTES = MAX_MEDIA_UPLOAD_SIZE_MB * 1024 * 1024;
+const MEDIA_UPLOAD_CHUNK_SIZE_BYTES = 8 * 1024 * 1024;
+const UPLOAD_SESSION_STORAGE_PREFIX = "quanyu_upload_session_v1";
 
 export type AdminStatus =
   | {
@@ -135,28 +139,267 @@ async function parseErrorMessage(response: Response, fallback: string) {
   return errorPayload?.error || fallback;
 }
 
-function getUploadErrorMessage(payload: { error?: string; maxSizeMb?: number } | null, xhr: XMLHttpRequest) {
-  if (payload?.error === "file_too_large") {
-    return `文件过大，单个文件请不要超过 ${payload.maxSizeMb ?? 128} MB`;
+function getUploadErrorMessage(
+  payload:
+    | { error?: string; maxSizeMb?: number; receivedBytes?: number }
+    | { ok: true; uploadId: string; receivedBytes: number; size: number }
+    | { ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState }
+    | null,
+  xhrOrStatus: XMLHttpRequest | number,
+) {
+  const status = typeof xhrOrStatus === "number" ? xhrOrStatus : xhrOrStatus.status;
+
+  if (isUploadErrorPayload(payload) && payload.error === "file_too_large") {
+    return `文件过大，单个文件请不要超过 ${payload.maxSizeMb ?? MAX_MEDIA_UPLOAD_SIZE_MB} MB`;
   }
 
-  if (payload?.error === "no_file_uploaded") {
+  if (isUploadErrorPayload(payload) && payload.error === "no_file_uploaded") {
     return "没有检测到要上传的文件";
   }
 
-  if (payload?.error) {
+  if (isUploadErrorPayload(payload) && payload.error === "upload_session_not_found") {
+    return "上传会话已失效，请重新开始";
+  }
+
+  if (isUploadErrorPayload(payload) && payload.error === "upload_incomplete") {
+    return "文件还没有全部上传完成";
+  }
+
+  if (isUploadErrorPayload(payload) && payload.error === "invalid_upload_chunk") {
+    return "上传分片无效，请重新开始上传";
+  }
+
+  if (isUploadErrorPayload(payload) && payload.error === "upload_chunk_too_large") {
+    return "上传分片过大，请刷新页面后重试";
+  }
+
+  if (isUploadErrorPayload(payload) && payload.error) {
     return payload.error;
   }
 
-  if (xhr.status === 413) {
+  if (status === 413) {
     return "文件过大，上传请求被服务器拒绝";
   }
 
-  if (xhr.status === 415) {
+  if (status === 415) {
     return "当前只支持图片和视频素材";
   }
 
-  return `upload_failed_${xhr.status || "unknown"}`;
+  return `upload_failed_${status || "unknown"}`;
+}
+
+class UploadOffsetMismatchError extends Error {
+  receivedBytes: number;
+
+  constructor(receivedBytes: number) {
+    super("upload_offset_mismatch");
+    this.receivedBytes = receivedBytes;
+  }
+}
+
+class UploadSessionExpiredError extends Error {
+  constructor() {
+    super("upload_session_not_found");
+  }
+}
+
+function getUploadSessionFingerprint(file: File, folderPath: string | undefined) {
+  return [file.name, String(file.size), file.type, String(file.lastModified), folderPath?.trim() ?? ""].join("::");
+}
+
+function getUploadSessionStorageKey(file: File, folderPath: string | undefined) {
+  return `${UPLOAD_SESSION_STORAGE_PREFIX}:${getUploadSessionFingerprint(file, folderPath)}`;
+}
+
+function readStoredUploadSessionId(storageKey: string) {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  try {
+    return window.localStorage.getItem(storageKey) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeStoredUploadSessionId(storageKey: string, uploadId: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(storageKey, uploadId);
+  } catch {
+    // Ignore storage failures and continue without resumable persistence.
+  }
+}
+
+function clearStoredUploadSessionId(storageKey: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(storageKey);
+  } catch {
+    // Ignore storage failures and continue.
+  }
+}
+
+type UploadSessionStatus = {
+  ok: true;
+  uploadId: string;
+  fileName: string;
+  size: number;
+  receivedBytes: number;
+  maxSizeMb: number;
+};
+
+function isUploadErrorPayload(
+  payload:
+    | { ok: true; uploadId: string; receivedBytes: number; size: number }
+    | { ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState }
+    | { error?: string; receivedBytes?: number; maxSizeMb?: number }
+    | null,
+): payload is { error?: string; receivedBytes?: number; maxSizeMb?: number } {
+  return Boolean(payload && "error" in payload);
+}
+
+async function createUploadSession(file: File, token: string, folderPath: string | undefined) {
+  const response = await fetchWithFallback("/api/admin/media-library/upload-sessions", {
+    method: "POST",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type,
+      folderPath,
+    }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | (UploadSessionStatus & { error?: string; receivedBytes?: number })
+    | { error?: string; maxSizeMb?: number }
+    | null;
+
+  if (!response.ok) {
+    throw new Error(getUploadErrorMessage(payload, response.status));
+  }
+
+  return payload as UploadSessionStatus;
+}
+
+async function fetchUploadSessionStatus(uploadId: string, token: string) {
+  const response = await fetchWithFallback(`/api/admin/media-library/upload-sessions/${uploadId}`, {
+    headers: createAdminHeaders(token),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | (UploadSessionStatus & { error?: string; receivedBytes?: number })
+    | { error?: string; maxSizeMb?: number }
+    | null;
+
+  if (!response.ok) {
+    if (payload?.error === "upload_session_not_found" || response.status === 404) {
+      throw new UploadSessionExpiredError();
+    }
+
+    throw new Error(getUploadErrorMessage(payload, response.status));
+  }
+
+  return payload as UploadSessionStatus;
+}
+
+async function uploadChunk(
+  uploadId: string,
+  offset: number,
+  chunk: Blob,
+  token: string,
+  onProgress?: (loadedBytes: number) => void,
+) {
+  const requestPath = appendQuery(`/api/admin/media-library/upload-sessions/${uploadId}/chunk`, {
+    offset: String(offset),
+  });
+  const requestUrl = buildRequestUrl(runtimeApiBaseUrl ?? API_BASE_URL, requestPath);
+
+  return new Promise<{ ok: true; uploadId: string; receivedBytes: number; size: number }>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", requestUrl);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) {
+        onProgress?.(event.loaded);
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("upload_network_error"));
+    };
+
+    xhr.onload = () => {
+      let payload:
+        | { ok: true; uploadId: string; receivedBytes: number; size: number }
+        | { error?: string; receivedBytes?: number; maxSizeMb?: number }
+        | null = null;
+
+      try {
+        payload = (JSON.parse(xhr.responseText || "null") ?? null) as
+          | { ok: true; uploadId: string; receivedBytes: number; size: number }
+          | { error?: string; receivedBytes?: number; maxSizeMb?: number }
+          | null;
+      } catch {
+        reject(new Error(getUploadErrorMessage(null, xhr)));
+        return;
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as { ok: true; uploadId: string; receivedBytes: number; size: number });
+        return;
+      }
+
+      if (isUploadErrorPayload(payload) && payload.error === "upload_offset_mismatch" && typeof payload.receivedBytes === "number") {
+        reject(new UploadOffsetMismatchError(payload.receivedBytes));
+        return;
+      }
+
+      if ((isUploadErrorPayload(payload) && payload.error === "upload_session_not_found") || xhr.status === 404) {
+        reject(new UploadSessionExpiredError());
+        return;
+      }
+
+      reject(new Error(getUploadErrorMessage(payload, xhr)));
+    };
+
+    xhr.send(chunk);
+  });
+}
+
+async function completeUploadSession(uploadId: string, token: string) {
+  const response = await fetchWithFallback(`/api/admin/media-library/upload-sessions/${uploadId}/complete`, {
+    method: "POST",
+    headers: createAdminHeaders(token),
+  });
+
+  const payload = (await response.json().catch(() => null)) as
+    | { ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState }
+    | { error?: string; maxSizeMb?: number }
+    | null;
+
+  if (!response.ok) {
+    if ((isUploadErrorPayload(payload) && payload.error === "upload_session_not_found") || response.status === 404) {
+      throw new UploadSessionExpiredError();
+    }
+
+    throw new Error(getUploadErrorMessage(payload, response.status));
+  }
+
+  return payload as { ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState };
 }
 
 export async function loginAdmin(payload: { username: string; password: string }) {
@@ -271,78 +514,106 @@ export async function uploadFile(
   options?: {
     folderPath?: string;
     onProgress?: (progress: number) => void;
+    onTransferredBytes?: (uploadedBytes: number, totalBytes: number) => void;
   },
 ) {
-  const formData = new FormData();
-  formData.append("file", file);
-  const requestPath = appendQuery("/api/admin/media-library/upload", {
-    folderPath: options?.folderPath,
-  });
+  if (file.size > MAX_MEDIA_UPLOAD_SIZE_BYTES) {
+    throw new Error(`文件过大，单个文件请不要超过 ${MAX_MEDIA_UPLOAD_SIZE_MB} MB`);
+  }
 
-  return new Promise<{ ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState }>((resolve, reject) => {
-    const candidates = getApiBaseCandidates();
-    let candidateIndex = 0;
-    let settled = false;
+  const sessionStorageKey = getUploadSessionStorageKey(file, options?.folderPath);
+  let uploadId = readStoredUploadSessionId(sessionStorageKey);
+  let session: UploadSessionStatus | null = null;
 
-    const attemptUpload = () => {
-      const base = candidates[candidateIndex];
-      const xhr = new XMLHttpRequest();
-      const requestUrl = buildRequestUrl(base, requestPath);
+  if (uploadId) {
+    try {
+      session = await fetchUploadSessionStatus(uploadId, token);
+    } catch (error) {
+      if (error instanceof UploadSessionExpiredError) {
+        clearStoredUploadSessionId(sessionStorageKey);
+        uploadId = undefined;
+      } else {
+        throw error;
+      }
+    }
+  }
 
-      xhr.open("POST", requestUrl);
-      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+  if (!uploadId || !session) {
+    session = await createUploadSession(file, token, options?.folderPath);
+    uploadId = session.uploadId;
+    writeStoredUploadSessionId(sessionStorageKey, uploadId);
+  }
 
-      xhr.upload.onprogress = (event) => {
-        if (event.lengthComputable) {
-          options?.onProgress?.(Math.round((event.loaded / event.total) * 100));
+  if (!session) {
+    throw new Error("upload_session_not_found");
+  }
+
+  let uploadedBytes = session.receivedBytes;
+  let retryCount = 0;
+  options?.onTransferredBytes?.(uploadedBytes, file.size);
+  options?.onProgress?.(Math.round((uploadedBytes / Math.max(file.size, 1)) * 100));
+
+  while (uploadedBytes < file.size) {
+    const chunkEnd = Math.min(uploadedBytes + MEDIA_UPLOAD_CHUNK_SIZE_BYTES, file.size);
+    const chunk = file.slice(uploadedBytes, chunkEnd);
+
+    try {
+      const result = await uploadChunk(uploadId, uploadedBytes, chunk, token, (loadedBytes) => {
+        const nextUploadedBytes = Math.min(uploadedBytes + loadedBytes, file.size);
+        options?.onTransferredBytes?.(nextUploadedBytes, file.size);
+        options?.onProgress?.(Math.round((nextUploadedBytes / Math.max(file.size, 1)) * 100));
+      });
+
+      uploadedBytes = result.receivedBytes;
+      retryCount = 0;
+      options?.onTransferredBytes?.(uploadedBytes, file.size);
+      options?.onProgress?.(Math.round((uploadedBytes / Math.max(file.size, 1)) * 100));
+    } catch (error) {
+      if (error instanceof UploadOffsetMismatchError) {
+        uploadedBytes = error.receivedBytes;
+        options?.onTransferredBytes?.(uploadedBytes, file.size);
+        options?.onProgress?.(Math.round((uploadedBytes / Math.max(file.size, 1)) * 100));
+        retryCount = 0;
+        continue;
+      }
+
+      if (error instanceof UploadSessionExpiredError) {
+        clearStoredUploadSessionId(sessionStorageKey);
+        session = await createUploadSession(file, token, options?.folderPath);
+        uploadId = session.uploadId;
+        uploadedBytes = session.receivedBytes;
+        writeStoredUploadSessionId(sessionStorageKey, uploadId);
+        retryCount = 0;
+        continue;
+      }
+
+      const latestStatus = await fetchUploadSessionStatus(uploadId, token).catch(() => null);
+
+      if (latestStatus) {
+        if (latestStatus.receivedBytes !== uploadedBytes) {
+          uploadedBytes = latestStatus.receivedBytes;
+          options?.onTransferredBytes?.(uploadedBytes, file.size);
+          options?.onProgress?.(Math.round((uploadedBytes / Math.max(file.size, 1)) * 100));
+          retryCount = 0;
+          continue;
         }
-      };
 
-      xhr.onerror = () => {
-        if (settled) {
-          return;
+        retryCount += 1;
+
+        if (retryCount <= 3) {
+          continue;
         }
+      }
 
-        candidateIndex += 1;
+      throw error;
+    }
+  }
 
-        if (candidateIndex < candidates.length) {
-          attemptUpload();
-          return;
-        }
-
-        settled = true;
-        reject(new Error("upload_network_error"));
-      };
-
-      xhr.onload = () => {
-        if (settled) {
-          return;
-        }
-
-        try {
-          const payload = (JSON.parse(xhr.responseText || "null") ?? null) as { error?: string; maxSizeMb?: number } | null;
-
-          if (xhr.status < 200 || xhr.status >= 300) {
-            settled = true;
-            reject(new Error(getUploadErrorMessage(payload, xhr)));
-            return;
-          }
-
-          runtimeApiBaseUrl = base;
-          options?.onProgress?.(100);
-          settled = true;
-          resolve(payload as { ok: true; url: string; fileName: string; asset: MediaLibraryAsset; library: MediaLibraryState });
-        } catch {
-          settled = true;
-          reject(new Error(getUploadErrorMessage(null, xhr)));
-        }
-      };
-
-      xhr.send(formData);
-    };
-
-    attemptUpload();
-  });
+  const result = await completeUploadSession(uploadId, token);
+  clearStoredUploadSessionId(sessionStorageKey);
+  options?.onTransferredBytes?.(file.size, file.size);
+  options?.onProgress?.(100);
+  return result;
 }
 
 export async function fetchMediaLibrary(token: string) {

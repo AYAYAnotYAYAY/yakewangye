@@ -15,6 +15,8 @@ type MediaFilter = "image" | "video" | "all";
 type UploadQueueItem = {
   id: string;
   fileName: string;
+  fileSize: number;
+  uploadedBytes: number;
   progress: number;
   status: "queued" | "uploading" | "success" | "error";
   error?: string;
@@ -110,6 +112,22 @@ function formatUploadErrorMessage(error: string | undefined) {
     return "目标文件夹不存在";
   }
 
+  if (normalized === "upload_session_not_found") {
+    return "上传会话已失效，请重新开始";
+  }
+
+  if (normalized === "upload_incomplete") {
+    return "文件还没有全部上传完成";
+  }
+
+  if (normalized === "invalid_upload_chunk") {
+    return "上传分片无效，请重新开始上传";
+  }
+
+  if (normalized === "upload_chunk_too_large") {
+    return "上传分片过大，请刷新后重试";
+  }
+
   if (normalized === "Only image and video uploads are supported") {
     return "当前只支持图片和视频素材";
   }
@@ -198,16 +216,17 @@ function UploadQueuePanel(props: {
   const headerNote = allFinished
     ? `成功 ${successCount} 个，失败 ${errorCount} 个。`
     : activeItem
-      ? `当前文件：${activeItem.fileName}`
+      ? `当前文件：${activeItem.fileName} · ${formatFileSize(activeItem.uploadedBytes)} / ${formatFileSize(activeItem.fileSize)}`
       : "上传队列准备中";
   const highlightMessage =
     activeItem?.status === "error"
       ? formatUploadErrorMessage(activeItem.error)
       : activeItem?.status === "success"
-        ? "上传完成，已经加入素材库。"
+        ? `上传完成，已写入 ${formatFileSize(activeItem.fileSize)}。`
         : activeItem
-          ? `${activeItem.progress}%`
+          ? `${formatFileSize(activeItem.uploadedBytes)} / ${formatFileSize(activeItem.fileSize)} · ${activeItem.progress}%`
           : "等待上传";
+  const overallMetric = allFinished && errorCount ? "已结束" : `${overallProgress}%`;
 
   if (!props.open) {
     return (
@@ -234,7 +253,7 @@ function UploadQueuePanel(props: {
         <div className="admin-upload-center-head">
           <div>
             <h3 id="upload-center-title">上传中心</h3>
-            <div className="entity-note">上传在后台继续进行，你可以继续整理素材和编辑内容。</div>
+            <div className="entity-note">大文件会自动分片上传，网络中断后会从已完成位置继续。</div>
           </div>
           <div className="admin-upload-center-head-actions">
             {allFinished ? (
@@ -254,7 +273,7 @@ function UploadQueuePanel(props: {
             <span>{headerNote}</span>
           </div>
           <div className="admin-upload-overview-stats">
-            <strong>{overallProgress}%</strong>
+            <strong>{overallMetric}</strong>
             <span>
               成功 {successCount} / 失败 {errorCount}
             </span>
@@ -290,7 +309,11 @@ function UploadQueuePanel(props: {
                 <div className="admin-upload-progress-value" style={{ width: `${item.progress}%` }} />
               </div>
               <div className="entity-note">
-                {item.status === "error" ? formatUploadErrorMessage(item.error) : item.status === "success" ? "上传完成" : `${item.progress}%`}
+                {item.status === "error"
+                  ? formatUploadErrorMessage(item.error)
+                  : item.status === "success"
+                    ? `上传完成 · ${formatFileSize(item.fileSize)}`
+                    : `${formatFileSize(item.uploadedBytes)} / ${formatFileSize(item.fileSize)} · ${item.progress}%`}
               </div>
             </div>
           ))}
@@ -602,6 +625,8 @@ export function MediaLibraryManager(props: {
     const items = files.map((file, index) => ({
       id: `${Date.now()}-${index}-${file.name}`,
       fileName: file.name,
+      fileSize: file.size,
+      uploadedBytes: 0,
       progress: 0,
       status: "queued" as const,
     }));
@@ -620,10 +645,19 @@ export function MediaLibraryManager(props: {
           onProgress: (progress) => {
             setQueueItems((current) => current.map((item) => (item.id === queueId ? { ...item, status: "uploading", progress } : item)));
           },
+          onTransferredBytes: (uploadedBytes) => {
+            setQueueItems((current) =>
+              current.map((item) => (item.id === queueId ? { ...item, status: "uploading", uploadedBytes } : item)),
+            );
+          },
         });
 
         props.onLibraryChange(result.library);
-        setQueueItems((current) => current.map((item) => (item.id === queueId ? { ...item, status: "success", progress: 100 } : item)));
+        setQueueItems((current) =>
+          current.map((item) =>
+            item.id === queueId ? { ...item, status: "success", progress: 100, uploadedBytes: item.fileSize } : item,
+          ),
+        );
       } catch (error) {
         setQueueItems((current) =>
           current.map((item) =>

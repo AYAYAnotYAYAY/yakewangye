@@ -19,11 +19,23 @@ import {
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
 import { ensureUploadsStorage, inferMimeTypeFromFileName } from "../../lib/storage/storage-paths";
+import { UploadOffsetMismatchError, uploadSessionRepository } from "../../lib/storage/upload-session-repository";
 
-const UPLOAD_MAX_FILE_SIZE_MB = Math.max(10, Number(process.env.UPLOAD_MAX_FILE_SIZE_MB ?? 128) || 128);
+const UPLOAD_MAX_FILE_SIZE_MB = Math.max(10, Number(process.env.UPLOAD_MAX_FILE_SIZE_MB ?? 1024) || 1024);
 
 const uploadQuerySchema = z.object({
   folderPath: z.string().optional(),
+});
+
+const uploadSessionCreateSchema = z.object({
+  fileName: z.string().trim().min(1),
+  fileSize: z.number().int().positive().max(UPLOAD_MAX_FILE_SIZE_MB * 1024 * 1024),
+  mimeType: z.string().optional(),
+  folderPath: z.string().optional(),
+});
+
+const uploadChunkQuerySchema = z.object({
+  offset: z.coerce.number().int().min(0),
 });
 
 const updateAssetSchema = z.object({
@@ -108,6 +120,16 @@ function parseAssetId(request: FastifyRequest) {
   }
 
   return params.id.trim();
+}
+
+function parseUploadSessionId(request: FastifyRequest) {
+  const params = request.params as { uploadId?: string };
+
+  if (!params?.uploadId?.trim()) {
+    throw new Error("upload_session_id_required");
+  }
+
+  return params.uploadId.trim();
 }
 
 async function saveUpload(file: MultipartFile, folderPath = "") {
@@ -448,6 +470,178 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     } catch (error) {
       if (error instanceof Error && error.message === "asset_not_found") {
         return reply.status(404).send({
+          ok: false,
+          error: error.message,
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/admin/media-library/upload-sessions", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    try {
+      const parsed = uploadSessionCreateSchema.safeParse(request.body);
+
+      if (!parsed.success) {
+        const sizeTooLarge = parsed.error.issues.some((issue) => issue.path[0] === "fileSize" && issue.code === "too_big");
+
+        if (sizeTooLarge) {
+          return reply.status(413).send({
+            ok: false,
+            error: "file_too_large",
+            maxSizeMb: UPLOAD_MAX_FILE_SIZE_MB,
+          });
+        }
+
+        return reply.status(400).send({
+          ok: false,
+          error: parsed.error.flatten(),
+        });
+      }
+
+      const mediaType = resolveMediaTypeFromUpload(parsed.data.mimeType, parsed.data.fileName);
+
+      if (!mediaType) {
+        return reply.status(400).send({
+          ok: false,
+          error: "Only image and video uploads are supported",
+        });
+      }
+
+      const session = await uploadSessionRepository.createSession({
+        fileName: parsed.data.fileName,
+        folderPath: parsed.data.folderPath ?? "",
+        mediaType,
+        mimeType: resolveUploadMimeType(parsed.data.mimeType, parsed.data.fileName, mediaType),
+        size: parsed.data.fileSize,
+      });
+
+      return {
+        ok: true,
+        uploadId: session.id,
+        fileName: session.fileName,
+        size: session.size,
+        receivedBytes: session.receivedBytes,
+        maxSizeMb: UPLOAD_MAX_FILE_SIZE_MB,
+      };
+    } catch (error) {
+      if (error instanceof Error && error.message === "folder_not_found") {
+        return reply.status(400).send({
+          ok: false,
+          error: error.message,
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.get("/api/admin/media-library/upload-sessions/:uploadId", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    try {
+      const session = await uploadSessionRepository.readSession(parseUploadSessionId(request));
+
+      if (!session) {
+        return reply.status(404).send({
+          ok: false,
+          error: "upload_session_not_found",
+        });
+      }
+
+      return {
+        ok: true,
+        uploadId: session.id,
+        fileName: session.fileName,
+        size: session.size,
+        receivedBytes: session.receivedBytes,
+        maxSizeMb: UPLOAD_MAX_FILE_SIZE_MB,
+      };
+    } catch (error) {
+      throw error;
+    }
+  });
+
+  app.put("/api/admin/media-library/upload-sessions/:uploadId/chunk", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    try {
+      const parsedQuery = uploadChunkQuerySchema.safeParse(request.query);
+
+      if (!parsedQuery.success) {
+        return reply.status(400).send({
+          ok: false,
+          error: parsedQuery.error.flatten(),
+        });
+      }
+
+      const chunk = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+      const session = await uploadSessionRepository.appendChunk({
+        id: parseUploadSessionId(request),
+        offset: parsedQuery.data.offset,
+        chunk,
+      });
+
+      return {
+        ok: true,
+        uploadId: session.id,
+        receivedBytes: session.receivedBytes,
+        size: session.size,
+      };
+    } catch (error) {
+      if (error instanceof UploadOffsetMismatchError) {
+        return reply.status(409).send({
+          ok: false,
+          error: error.message,
+          receivedBytes: error.receivedBytes,
+        });
+      }
+
+      if (error instanceof Error && ["upload_session_not_found", "invalid_upload_chunk"].includes(error.message)) {
+        return reply.status(error.message === "upload_session_not_found" ? 404 : 400).send({
+          ok: false,
+          error: error.message,
+        });
+      }
+
+      if (error && typeof error === "object" && "code" in error && error.code === "FST_ERR_CTP_BODY_TOO_LARGE") {
+        return reply.status(413).send({
+          ok: false,
+          error: "upload_chunk_too_large",
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/admin/media-library/upload-sessions/:uploadId/complete", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    try {
+      return await uploadSessionRepository.completeSession(parseUploadSessionId(request));
+    } catch (error) {
+      if (error instanceof Error && ["upload_session_not_found", "upload_incomplete", "folder_not_found"].includes(error.message)) {
+        return reply.status(error.message === "upload_session_not_found" ? 404 : 400).send({
           ok: false,
           error: error.message,
         });
