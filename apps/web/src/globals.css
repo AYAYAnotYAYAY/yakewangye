@@ -1024,6 +1024,10 @@ h1, h2, h3, h4 {
   gap: 8px;
 }
 
+.admin-full-span {
+  grid-column: 1 / -1;
+}
+
 .admin-field span {
   font-size: 13px;
   font-weight: 700;
@@ -1101,6 +1105,41 @@ h1, h2, h3, h4 {
 .admin-media-library {
   display: grid;
   gap: 14px;
+}
+
+.admin-ai-diff-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.admin-ai-diff-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+}
+
+.admin-ai-diff-card.selected {
+  border-color: rgba(23, 92, 211, 0.35);
+  box-shadow: 0 10px 24px rgba(23, 92, 211, 0.08);
+}
+
+.admin-ai-diff-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-ai-diff-head input {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-ai-diff-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .admin-library-grid {

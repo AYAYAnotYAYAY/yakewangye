@@ -530,6 +530,21 @@ export async function downloadAdminBackup(token: string) {
   };
 }
 
+export async function downloadAiCopyPackage(token: string) {
+  const response = await fetchWithFallback("/api/admin/backup/ai-copy", {
+    headers: createAdminHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "ai_copy_download_failed"));
+  }
+
+  return {
+    fileName: getDownloadFileName(response, `quanyu-ai-copy-package-${Date.now()}.json`),
+    blob: await response.blob(),
+  };
+}
+
 export async function restoreAdminBackup(file: File, token: string) {
   const formData = new FormData();
   formData.set("file", file);
@@ -559,6 +574,26 @@ export async function restoreAdminBackup(file: File, token: string) {
       mediaFolderCount: number;
       uploadFileCount: number;
     };
+  };
+}
+
+export async function restoreAiCopyPackage(file: File, token: string) {
+  const formData = new FormData();
+  formData.set("file", file);
+
+  const response = await fetchWithFallback("/api/admin/backup/restore-ai-copy", {
+    method: "POST",
+    headers: createAdminHeaders(token),
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "ai_copy_restore_failed"));
+  }
+
+  return (await response.json()) as {
+    ok: true;
+    restoredAt: string;
   };
 }
 

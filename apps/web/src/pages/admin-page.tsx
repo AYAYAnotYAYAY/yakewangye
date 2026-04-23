@@ -12,6 +12,7 @@ import type {
 import {
   type AdminStatus,
   ADMIN_TOKEN_STORAGE_KEY,
+  downloadAiCopyPackage,
   downloadAdminBackup,
   fetchAdminContent,
   fetchAdminMe,
@@ -36,6 +37,19 @@ type AdminConsoleProps = AdminPageProps & {
   adminToken: string;
   username: string;
   onLogout: () => void;
+};
+
+type AiCopyPackage = {
+  format: "quanyu.ai-copy-package";
+  version: number;
+  contentSnapshot: CmsContent;
+};
+
+type AiDiffEntry = {
+  id: string;
+  label: string;
+  currentValue: string;
+  nextValue: string;
 };
 
 type TabKey =
@@ -69,6 +83,492 @@ function getAdminTabLabel(activeTab: TabKey) {
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function buildExternalAiInstructions(content: CmsContent) {
+  const contact = content.siteSettings.primaryContact;
+
+  return [
+    "你现在是这个网站的文案优化助手。",
+    "",
+    "网站类型：牙科诊所/门诊官网，目标是让访客先理解诊所实力和服务范围，再发起咨询并转到 Telegram 或人工沟通。",
+    `品牌名称：${content.siteSettings.brandName}`,
+    `联系电话：${contact.phone}`,
+    `地址：${contact.address}`,
+    `Telegram：${contact.telegramHandle} ${contact.telegramUrl}`.trim(),
+    "",
+    "你的任务：",
+    "1. 先浏览同类牙科诊所、口腔门诊、跨境医疗咨询网站，研究他们的首页介绍、服务介绍、医生介绍、价格说明、信任表达和行动号召写法。",
+    "2. 再根据我提供的 JSON 内容，对本站文案进行重写，让它更专业、更可信、更像真实医疗服务网站，并且更适合咨询转化。",
+    "3. 输出时保留原 JSON 结构，返回完整 JSON，只修改适合改写的文字内容。",
+    "4. 注意：系统导回时只接受白名单内的文案字段，电话、地址、链接、配置、素材等字段即使被改也会被忽略。",
+    "",
+    "重点优化方向：",
+    "- 首页标题、副标题、卖点、行动按钮文案",
+    "- 服务项目介绍",
+    "- 医生介绍和信任表达",
+    "- 页面正文、文章摘要、SEO 标题和 SEO 描述",
+    "- 跨境就诊、咨询流程、联系方式引导",
+    "",
+    "严格禁止：",
+    "- 不要修改 JSON 结构",
+    "- 不要删除或新增顶层字段",
+    "- 不要修改 id、slug、href、url、图片地址、视频地址、fileName、storageKey",
+    "- 不要随意编造电话、地址、医生资历、价格、治疗效果、法律承诺",
+    "- 不要修改管理员配置、AI 接口配置、聊天记录、素材信息",
+    "",
+    "事实信息默认保持不变：",
+    `- 品牌名：${content.siteSettings.brandName}`,
+    `- 电话：${contact.phone}`,
+    `- 地址：${contact.address}`,
+    `- Telegram：${contact.telegramHandle} / ${contact.telegramUrl}`,
+    "",
+    "输出要求：",
+    "- 返回完整 JSON",
+    "- 保持字段名和层级完全一致",
+    "- 只改适合改写的文案字段",
+    "- 文案要与牙科门诊网站场景匹配，不能写成别的行业",
+  ].join("\n");
+}
+
+function stringifyDiffValue(value: string) {
+  return value.trim() ? value : "（空）";
+}
+
+function collectAiCopyDiffs(current: CmsContent, incoming: CmsContent) {
+  const diffs: AiDiffEntry[] = [];
+  const pushDiff = (id: string, label: string, currentValue: string, nextValue: string) => {
+    if (currentValue === nextValue) {
+      return;
+    }
+
+    diffs.push({
+      id,
+      label,
+      currentValue: stringifyDiffValue(currentValue),
+      nextValue: stringifyDiffValue(nextValue),
+    });
+  };
+
+  pushDiff("siteSettings.topbarNotice", "站点设置 / 顶部提示", current.siteSettings.topbarNotice, incoming.siteSettings.topbarNotice);
+  pushDiff(
+    "siteSettings.footerDescription",
+    "站点设置 / 页脚说明",
+    current.siteSettings.footerDescription,
+    incoming.siteSettings.footerDescription,
+  );
+
+  current.siteSettings.navigation.forEach((item, index) => {
+    pushDiff(
+      `siteSettings.navigation.${item.id}.label`,
+      `站点设置 / 导航文案 / ${item.id}`,
+      item.label,
+      incoming.siteSettings.navigation[index]?.label ?? item.label,
+    );
+  });
+
+  pushDiff("homePage.title", "首页 / 页面标题", current.homePage.title, incoming.homePage.title);
+  pushDiff("homePage.seoTitle", "首页 / SEO 标题", current.homePage.seoTitle, incoming.homePage.seoTitle);
+  pushDiff("homePage.seoDescription", "首页 / SEO 描述", current.homePage.seoDescription, incoming.homePage.seoDescription);
+
+  current.homePage.sections.forEach((section, index) => {
+    const next = incoming.homePage.sections[index];
+
+    if (!next || next.id !== section.id || next.type !== section.type) {
+      return;
+    }
+
+    pushDiff(`homePage.sections.${section.id}.eyebrow`, `首页模块 / ${section.id} / 眉题`, section.eyebrow, next.eyebrow);
+    pushDiff(`homePage.sections.${section.id}.title`, `首页模块 / ${section.id} / 标题`, section.title, next.title);
+    pushDiff(`homePage.sections.${section.id}.description`, `首页模块 / ${section.id} / 描述`, section.description, next.description);
+
+    if (section.type === "hero" && next.type === "hero") {
+      section.actions.forEach((action, actionIndex) => {
+        pushDiff(
+          `homePage.sections.${section.id}.actions.${actionIndex}.label`,
+          `首页模块 / ${section.id} / 按钮 ${actionIndex + 1}`,
+          action.label,
+          next.actions[actionIndex]?.label ?? action.label,
+        );
+      });
+      section.highlights.forEach((item, itemIndex) => {
+        pushDiff(
+          `homePage.sections.${section.id}.highlights.${itemIndex}.label`,
+          `首页模块 / ${section.id} / 高亮 ${itemIndex + 1} 标题`,
+          item.label,
+          next.highlights[itemIndex]?.label ?? item.label,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.highlights.${itemIndex}.value`,
+          `首页模块 / ${section.id} / 高亮 ${itemIndex + 1} 内容`,
+          item.value,
+          next.highlights[itemIndex]?.value ?? item.value,
+        );
+      });
+      pushDiff(
+        `homePage.sections.${section.id}.aiPanel.title`,
+        `首页模块 / ${section.id} / AI 面板标题`,
+        section.aiPanel.title,
+        next.aiPanel.title,
+      );
+      pushDiff(
+        `homePage.sections.${section.id}.aiPanel.description`,
+        `首页模块 / ${section.id} / AI 面板描述`,
+        section.aiPanel.description,
+        next.aiPanel.description,
+      );
+      section.aiPanel.steps.forEach((step, stepIndex) => {
+        pushDiff(
+          `homePage.sections.${section.id}.aiPanel.steps.${stepIndex}`,
+          `首页模块 / ${section.id} / AI 面板步骤 ${stepIndex + 1}`,
+          step,
+          next.aiPanel.steps[stepIndex] ?? step,
+        );
+      });
+    }
+
+    if (section.type === "services" && next.type === "services") {
+      section.items.forEach((item, itemIndex) => {
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.tag`,
+          `首页模块 / ${section.id} / 项目 ${itemIndex + 1} 标签`,
+          item.tag,
+          next.items[itemIndex]?.tag ?? item.tag,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.title`,
+          `首页模块 / ${section.id} / 项目 ${itemIndex + 1} 标题`,
+          item.title,
+          next.items[itemIndex]?.title ?? item.title,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.summary`,
+          `首页模块 / ${section.id} / 项目 ${itemIndex + 1} 摘要`,
+          item.summary,
+          next.items[itemIndex]?.summary ?? item.summary,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.ctaLabel`,
+          `首页模块 / ${section.id} / 项目 ${itemIndex + 1} 按钮`,
+          item.ctaLabel,
+          next.items[itemIndex]?.ctaLabel ?? item.ctaLabel,
+        );
+      });
+    }
+
+    if (section.type === "journey" && next.type === "journey") {
+      section.steps.forEach((item, itemIndex) => {
+        pushDiff(
+          `homePage.sections.${section.id}.steps.${itemIndex}.title`,
+          `首页模块 / ${section.id} / 步骤 ${itemIndex + 1} 标题`,
+          item.title,
+          next.steps[itemIndex]?.title ?? item.title,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.steps.${itemIndex}.summary`,
+          `首页模块 / ${section.id} / 步骤 ${itemIndex + 1} 摘要`,
+          item.summary,
+          next.steps[itemIndex]?.summary ?? item.summary,
+        );
+      });
+    }
+
+    if (section.type === "gallery" && next.type === "gallery") {
+      section.items.forEach((item, itemIndex) => {
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.title`,
+          `首页模块 / ${section.id} / 图册 ${itemIndex + 1} 标题`,
+          item.title,
+          next.items[itemIndex]?.title ?? item.title,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.summary`,
+          `首页模块 / ${section.id} / 图册 ${itemIndex + 1} 摘要`,
+          item.summary,
+          next.items[itemIndex]?.summary ?? item.summary,
+        );
+      });
+    }
+
+    if (section.type === "articles" && next.type === "articles") {
+      section.items.forEach((item, itemIndex) => {
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.category`,
+          `首页模块 / ${section.id} / 文章 ${itemIndex + 1} 分类`,
+          item.category,
+          next.items[itemIndex]?.category ?? item.category,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.title`,
+          `首页模块 / ${section.id} / 文章 ${itemIndex + 1} 标题`,
+          item.title,
+          next.items[itemIndex]?.title ?? item.title,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.excerpt`,
+          `首页模块 / ${section.id} / 文章 ${itemIndex + 1} 摘要`,
+          item.excerpt,
+          next.items[itemIndex]?.excerpt ?? item.excerpt,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.seoTitle`,
+          `首页模块 / ${section.id} / 文章 ${itemIndex + 1} SEO 标题`,
+          item.seoTitle,
+          next.items[itemIndex]?.seoTitle ?? item.seoTitle,
+        );
+      });
+    }
+
+    if (section.type === "analytics" && next.type === "analytics") {
+      section.metrics.forEach((item, itemIndex) => {
+        pushDiff(
+          `homePage.sections.${section.id}.metrics.${itemIndex}.label`,
+          `首页模块 / ${section.id} / 指标 ${itemIndex + 1} 标题`,
+          item.label,
+          next.metrics[itemIndex]?.label ?? item.label,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.metrics.${itemIndex}.value`,
+          `首页模块 / ${section.id} / 指标 ${itemIndex + 1} 内容`,
+          item.value,
+          next.metrics[itemIndex]?.value ?? item.value,
+        );
+        pushDiff(
+          `homePage.sections.${section.id}.metrics.${itemIndex}.note`,
+          `首页模块 / ${section.id} / 指标 ${itemIndex + 1} 备注`,
+          item.note,
+          next.metrics[itemIndex]?.note ?? item.note,
+        );
+      });
+    }
+  });
+
+  current.articles.forEach((item) => {
+    const next = incoming.articles.find((candidate) => candidate.id === item.id);
+    if (!next) return;
+    pushDiff(`articles.${item.id}.title`, `文章 / ${item.id} / 标题`, item.title, next.title);
+    pushDiff(`articles.${item.id}.category`, `文章 / ${item.id} / 分类`, item.category, next.category);
+    pushDiff(`articles.${item.id}.excerpt`, `文章 / ${item.id} / 摘要`, item.excerpt, next.excerpt);
+    pushDiff(`articles.${item.id}.content`, `文章 / ${item.id} / 正文`, item.content, next.content);
+    pushDiff(`articles.${item.id}.seoTitle`, `文章 / ${item.id} / SEO 标题`, item.seoTitle, next.seoTitle);
+    pushDiff(`articles.${item.id}.seoDescription`, `文章 / ${item.id} / SEO 描述`, item.seoDescription, next.seoDescription);
+  });
+
+  current.doctors.forEach((item) => {
+    const next = incoming.doctors.find((candidate) => candidate.id === item.id);
+    if (!next) return;
+    pushDiff(`doctors.${item.id}.name`, `医生 / ${item.id} / 姓名`, item.name, next.name);
+    pushDiff(`doctors.${item.id}.title`, `医生 / ${item.id} / 职称`, item.title, next.title);
+    pushDiff(`doctors.${item.id}.summary`, `医生 / ${item.id} / 简介`, item.summary, next.summary);
+    item.specialties.forEach((specialty, specialtyIndex) => {
+      pushDiff(
+        `doctors.${item.id}.specialties.${specialtyIndex}`,
+        `医生 / ${item.id} / 专长 ${specialtyIndex + 1}`,
+        specialty,
+        next.specialties[specialtyIndex] ?? specialty,
+      );
+    });
+    pushDiff(`doctors.${item.id}.experience`, `医生 / ${item.id} / 经验`, item.experience, next.experience);
+  });
+
+  current.services.forEach((item) => {
+    const next = incoming.services.find((candidate) => candidate.id === item.id);
+    if (!next) return;
+    pushDiff(`services.${item.id}.name`, `服务 / ${item.id} / 名称`, item.name, next.name);
+    pushDiff(`services.${item.id}.category`, `服务 / ${item.id} / 分类`, item.category, next.category);
+    pushDiff(`services.${item.id}.summary`, `服务 / ${item.id} / 摘要`, item.summary, next.summary);
+    pushDiff(`services.${item.id}.details`, `服务 / ${item.id} / 详情`, item.details, next.details);
+  });
+
+  current.pricing.forEach((item) => {
+    const next = incoming.pricing.find((candidate) => candidate.id === item.id);
+    if (!next) return;
+    pushDiff(`pricing.${item.id}.name`, `价格 / ${item.id} / 名称`, item.name, next.name);
+    pushDiff(`pricing.${item.id}.category`, `价格 / ${item.id} / 分类`, item.category, next.category);
+    pushDiff(`pricing.${item.id}.notes`, `价格 / ${item.id} / 备注`, item.notes, next.notes);
+  });
+
+  current.gallery.forEach((item) => {
+    const next = incoming.gallery.find((candidate) => candidate.id === item.id);
+    if (!next) return;
+    pushDiff(`gallery.${item.id}.title`, `图册 / ${item.id} / 标题`, item.title, next.title);
+    pushDiff(`gallery.${item.id}.summary`, `图册 / ${item.id} / 摘要`, item.summary, next.summary);
+  });
+
+  current.pages.forEach((item) => {
+    const next = incoming.pages.find((candidate) => candidate.id === item.id);
+    if (!next) return;
+    pushDiff(`pages.${item.id}.title`, `页面 / ${item.id} / 标题`, item.title, next.title);
+    pushDiff(`pages.${item.id}.summary`, `页面 / ${item.id} / 摘要`, item.summary, next.summary);
+    pushDiff(`pages.${item.id}.content`, `页面 / ${item.id} / 正文`, item.content, next.content);
+    pushDiff(`pages.${item.id}.seoTitle`, `页面 / ${item.id} / SEO 标题`, item.seoTitle, next.seoTitle);
+    pushDiff(`pages.${item.id}.seoDescription`, `页面 / ${item.id} / SEO 描述`, item.seoDescription, next.seoDescription);
+  });
+
+  return diffs;
+}
+
+function applySelectedAiDiffs(current: CmsContent, incoming: CmsContent, selectedIds: Set<string>): CmsContent {
+  const nextContent = JSON.parse(JSON.stringify(current)) as CmsContent;
+  const has = (id: string) => selectedIds.has(id);
+
+  if (has("siteSettings.topbarNotice")) nextContent.siteSettings.topbarNotice = incoming.siteSettings.topbarNotice;
+  if (has("siteSettings.footerDescription")) nextContent.siteSettings.footerDescription = incoming.siteSettings.footerDescription;
+
+  nextContent.siteSettings.navigation.forEach((item, index) => {
+    if (has(`siteSettings.navigation.${item.id}.label`)) {
+      item.label = incoming.siteSettings.navigation[index]?.label ?? item.label;
+    }
+  });
+
+  if (has("homePage.title")) nextContent.homePage.title = incoming.homePage.title;
+  if (has("homePage.seoTitle")) nextContent.homePage.seoTitle = incoming.homePage.seoTitle;
+  if (has("homePage.seoDescription")) nextContent.homePage.seoDescription = incoming.homePage.seoDescription;
+
+  nextContent.homePage.sections.forEach((section, index) => {
+    const incomingSection = incoming.homePage.sections[index];
+    if (!incomingSection || incomingSection.id !== section.id || incomingSection.type !== section.type) return;
+
+    if (has(`homePage.sections.${section.id}.eyebrow`)) section.eyebrow = incomingSection.eyebrow;
+    if (has(`homePage.sections.${section.id}.title`)) section.title = incomingSection.title;
+    if (has(`homePage.sections.${section.id}.description`)) section.description = incomingSection.description;
+
+    if (section.type === "hero" && incomingSection.type === "hero") {
+      section.actions.forEach((action, actionIndex) => {
+        if (has(`homePage.sections.${section.id}.actions.${actionIndex}.label`)) {
+          action.label = incomingSection.actions[actionIndex]?.label ?? action.label;
+        }
+      });
+      section.highlights.forEach((item, itemIndex) => {
+        if (has(`homePage.sections.${section.id}.highlights.${itemIndex}.label`)) {
+          item.label = incomingSection.highlights[itemIndex]?.label ?? item.label;
+        }
+        if (has(`homePage.sections.${section.id}.highlights.${itemIndex}.value`)) {
+          item.value = incomingSection.highlights[itemIndex]?.value ?? item.value;
+        }
+      });
+      if (has(`homePage.sections.${section.id}.aiPanel.title`)) section.aiPanel.title = incomingSection.aiPanel.title;
+      if (has(`homePage.sections.${section.id}.aiPanel.description`)) section.aiPanel.description = incomingSection.aiPanel.description;
+      section.aiPanel.steps.forEach((step, stepIndex) => {
+        if (has(`homePage.sections.${section.id}.aiPanel.steps.${stepIndex}`)) {
+          section.aiPanel.steps[stepIndex] = incomingSection.aiPanel.steps[stepIndex] ?? step;
+        }
+      });
+    }
+
+    if (section.type === "services" && incomingSection.type === "services") {
+      section.items.forEach((item, itemIndex) => {
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.tag`)) item.tag = incomingSection.items[itemIndex]?.tag ?? item.tag;
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.title`)) item.title = incomingSection.items[itemIndex]?.title ?? item.title;
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.summary`)) item.summary = incomingSection.items[itemIndex]?.summary ?? item.summary;
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.ctaLabel`)) {
+          item.ctaLabel = incomingSection.items[itemIndex]?.ctaLabel ?? item.ctaLabel;
+        }
+      });
+    }
+
+    if (section.type === "journey" && incomingSection.type === "journey") {
+      section.steps.forEach((item, itemIndex) => {
+        if (has(`homePage.sections.${section.id}.steps.${itemIndex}.title`)) item.title = incomingSection.steps[itemIndex]?.title ?? item.title;
+        if (has(`homePage.sections.${section.id}.steps.${itemIndex}.summary`)) item.summary = incomingSection.steps[itemIndex]?.summary ?? item.summary;
+      });
+    }
+
+    if (section.type === "gallery" && incomingSection.type === "gallery") {
+      section.items.forEach((item, itemIndex) => {
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.title`)) item.title = incomingSection.items[itemIndex]?.title ?? item.title;
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.summary`)) item.summary = incomingSection.items[itemIndex]?.summary ?? item.summary;
+      });
+    }
+
+    if (section.type === "articles" && incomingSection.type === "articles") {
+      section.items.forEach((item, itemIndex) => {
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.category`)) item.category = incomingSection.items[itemIndex]?.category ?? item.category;
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.title`)) item.title = incomingSection.items[itemIndex]?.title ?? item.title;
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.excerpt`)) item.excerpt = incomingSection.items[itemIndex]?.excerpt ?? item.excerpt;
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.seoTitle`)) item.seoTitle = incomingSection.items[itemIndex]?.seoTitle ?? item.seoTitle;
+      });
+    }
+
+    if (section.type === "analytics" && incomingSection.type === "analytics") {
+      section.metrics.forEach((item, itemIndex) => {
+        if (has(`homePage.sections.${section.id}.metrics.${itemIndex}.label`)) item.label = incomingSection.metrics[itemIndex]?.label ?? item.label;
+        if (has(`homePage.sections.${section.id}.metrics.${itemIndex}.value`)) item.value = incomingSection.metrics[itemIndex]?.value ?? item.value;
+        if (has(`homePage.sections.${section.id}.metrics.${itemIndex}.note`)) item.note = incomingSection.metrics[itemIndex]?.note ?? item.note;
+      });
+    }
+  });
+
+  nextContent.articles.forEach((item) => {
+    const incomingItem = incoming.articles.find((candidate) => candidate.id === item.id);
+    if (!incomingItem) return;
+    if (has(`articles.${item.id}.title`)) item.title = incomingItem.title;
+    if (has(`articles.${item.id}.category`)) item.category = incomingItem.category;
+    if (has(`articles.${item.id}.excerpt`)) item.excerpt = incomingItem.excerpt;
+    if (has(`articles.${item.id}.content`)) item.content = incomingItem.content;
+    if (has(`articles.${item.id}.seoTitle`)) item.seoTitle = incomingItem.seoTitle;
+    if (has(`articles.${item.id}.seoDescription`)) item.seoDescription = incomingItem.seoDescription;
+  });
+
+  nextContent.doctors.forEach((item) => {
+    const incomingItem = incoming.doctors.find((candidate) => candidate.id === item.id);
+    if (!incomingItem) return;
+    if (has(`doctors.${item.id}.name`)) item.name = incomingItem.name;
+    if (has(`doctors.${item.id}.title`)) item.title = incomingItem.title;
+    if (has(`doctors.${item.id}.summary`)) item.summary = incomingItem.summary;
+    item.specialties.forEach((specialty, specialtyIndex) => {
+      if (has(`doctors.${item.id}.specialties.${specialtyIndex}`)) {
+        item.specialties[specialtyIndex] = incomingItem.specialties[specialtyIndex] ?? specialty;
+      }
+    });
+    if (has(`doctors.${item.id}.experience`)) item.experience = incomingItem.experience;
+  });
+
+  nextContent.services.forEach((item) => {
+    const incomingItem = incoming.services.find((candidate) => candidate.id === item.id);
+    if (!incomingItem) return;
+    if (has(`services.${item.id}.name`)) item.name = incomingItem.name;
+    if (has(`services.${item.id}.category`)) item.category = incomingItem.category;
+    if (has(`services.${item.id}.summary`)) item.summary = incomingItem.summary;
+    if (has(`services.${item.id}.details`)) item.details = incomingItem.details;
+  });
+
+  nextContent.pricing.forEach((item) => {
+    const incomingItem = incoming.pricing.find((candidate) => candidate.id === item.id);
+    if (!incomingItem) return;
+    if (has(`pricing.${item.id}.name`)) item.name = incomingItem.name;
+    if (has(`pricing.${item.id}.category`)) item.category = incomingItem.category;
+    if (has(`pricing.${item.id}.notes`)) item.notes = incomingItem.notes;
+  });
+
+  nextContent.gallery.forEach((item) => {
+    const incomingItem = incoming.gallery.find((candidate) => candidate.id === item.id);
+    if (!incomingItem) return;
+    if (has(`gallery.${item.id}.title`)) item.title = incomingItem.title;
+    if (has(`gallery.${item.id}.summary`)) item.summary = incomingItem.summary;
+  });
+
+  nextContent.pages.forEach((item) => {
+    const incomingItem = incoming.pages.find((candidate) => candidate.id === item.id);
+    if (!incomingItem) return;
+    if (has(`pages.${item.id}.title`)) item.title = incomingItem.title;
+    if (has(`pages.${item.id}.summary`)) item.summary = incomingItem.summary;
+    if (has(`pages.${item.id}.content`)) item.content = incomingItem.content;
+    if (has(`pages.${item.id}.seoTitle`)) item.seoTitle = incomingItem.seoTitle;
+    if (has(`pages.${item.id}.seoDescription`)) item.seoDescription = incomingItem.seoDescription;
+  });
+
+  return nextContent;
+}
+
+function isAiCopyPackage(value: unknown): value is AiCopyPackage {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "format" in value &&
+      "contentSnapshot" in value &&
+      (value as { format?: unknown }).format === "quanyu.ai-copy-package",
+  );
 }
 
 function TextField(props: {
@@ -233,13 +733,20 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
+  const [exportingAiCopy, setExportingAiCopy] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [restoringAiCopy, setRestoringAiCopy] = useState(false);
+  const [copyingInstructions, setCopyingInstructions] = useState(false);
+  const [pendingAiImport, setPendingAiImport] = useState<{ incoming: CmsContent; diffs: AiDiffEntry[] } | null>(null);
+  const [selectedAiDiffIds, setSelectedAiDiffIds] = useState<string[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [mediaLibrary, setMediaLibrary] = useState<MediaLibraryState>({
     folders: [],
     assets: [],
   });
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
+  const aiCopyFileInputRef = useRef<HTMLInputElement | null>(null);
+  const externalAiInstructions = buildExternalAiInstructions(draft);
 
   useEffect(() => {
     setDraft(content);
@@ -316,6 +823,26 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     }
   };
 
+  const handleAiCopyDownload = async () => {
+    setExportingAiCopy(true);
+
+    try {
+      const { blob, fileName } = await downloadAiCopyPackage(adminToken);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      window.alert(`导出 AI 文案包失败: ${String(error)}`);
+    } finally {
+      setExportingAiCopy(false);
+    }
+  };
+
   const handleRestoreFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -345,6 +872,86 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     }
   };
 
+  const handleAiCopyRestoreFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    setRestoringAiCopy(true);
+
+    try {
+      const raw = JSON.parse(await file.text()) as unknown;
+
+      if (!isAiCopyPackage(raw)) {
+        throw new Error("invalid_ai_copy_file");
+      }
+
+      const diffs = collectAiCopyDiffs(draft, raw.contentSnapshot);
+      setPendingAiImport({
+        incoming: raw.contentSnapshot,
+        diffs,
+      });
+      setSelectedAiDiffIds(diffs.map((item) => item.id));
+
+      if (!diffs.length) {
+        window.alert("这个 AI 文案包和当前内容没有可应用的文案差异。");
+      }
+    } catch (error) {
+      window.alert(`AI 文案包恢复失败: ${String(error)}`);
+    } finally {
+      setRestoringAiCopy(false);
+    }
+  };
+
+  const handleApplySelectedAiDiffs = async () => {
+    if (!pendingAiImport) {
+      return;
+    }
+
+    const selectedIds = new Set(selectedAiDiffIds);
+
+    if (!selectedIds.size) {
+      window.alert("请先勾选至少一项改动。");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const merged = applySelectedAiDiffs(draft, pendingAiImport.incoming, selectedIds);
+      const response = await saveContent(merged, adminToken);
+      setDraft(response.content);
+      onSaved(response.content);
+      setPendingAiImport(null);
+      setSelectedAiDiffIds([]);
+      window.alert(`已应用 ${selectedIds.size} 项 AI 文案改动。`);
+    } catch (error) {
+      window.alert(`应用 AI 文案改动失败: ${String(error)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCopyInstructions = async () => {
+    setCopyingInstructions(true);
+
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(externalAiInstructions);
+        window.alert("给外部 AI 的指令已复制。");
+      } else {
+        throw new Error("clipboard_unavailable");
+      }
+    } catch {
+      window.alert("当前环境不能直接复制，你可以手动复制下方指令内容。");
+    } finally {
+      setCopyingInstructions(false);
+    }
+  };
+
   return (
     <div className="container admin-page">
       <div className="admin-header card">
@@ -358,14 +965,35 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           <a className="button secondary" href="/">
             返回前台
           </a>
-          <button className="button secondary" onClick={handleBackupDownload} type="button" disabled={backingUp || restoring}>
+          <button
+            className="button secondary"
+            onClick={handleAiCopyDownload}
+            type="button"
+            disabled={backingUp || restoring || exportingAiCopy || restoringAiCopy}
+          >
+            {exportingAiCopy ? "导出中..." : "导出 AI 文案包"}
+          </button>
+          <button
+            className="button secondary"
+            onClick={() => aiCopyFileInputRef.current?.click()}
+            type="button"
+            disabled={backingUp || restoring || exportingAiCopy || restoringAiCopy}
+          >
+            {restoringAiCopy ? "导入中..." : "导入 AI 文案包"}
+          </button>
+          <button
+            className="button secondary"
+            onClick={handleBackupDownload}
+            type="button"
+            disabled={backingUp || restoring || exportingAiCopy || restoringAiCopy}
+          >
             {backingUp ? "导出中..." : "导出备份"}
           </button>
           <button
             className="button secondary"
             onClick={() => backupFileInputRef.current?.click()}
             type="button"
-            disabled={backingUp || restoring}
+            disabled={backingUp || restoring || exportingAiCopy || restoringAiCopy}
           >
             {restoring ? "恢复中..." : "从文件恢复"}
           </button>
@@ -376,6 +1004,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             {saving ? "保存中..." : "保存全部内容"}
           </button>
         </div>
+        <input ref={aiCopyFileInputRef} type="file" accept="application/json,.json" hidden onChange={handleAiCopyRestoreFile} />
         <input ref={backupFileInputRef} type="file" accept="application/json,.json" hidden onChange={handleRestoreFile} />
       </div>
 
@@ -417,6 +1046,86 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
         </aside>
 
         <section className="admin-content">
+          {pendingAiImport ? (
+            <div className="card admin-panel">
+              <div className="admin-toolbar">
+                <h3>AI 文案差异预览</h3>
+                <div className="admin-entity-actions">
+                  <button className="button secondary" onClick={() => setSelectedAiDiffIds(pendingAiImport.diffs.map((item) => item.id))} type="button">
+                    全选
+                  </button>
+                  <button className="button secondary" onClick={() => setSelectedAiDiffIds([])} type="button">
+                    全不选
+                  </button>
+                  <button
+                    className="button secondary"
+                    onClick={() => {
+                      setPendingAiImport(null);
+                      setSelectedAiDiffIds([]);
+                    }}
+                    type="button"
+                  >
+                    取消本次导入
+                  </button>
+                  <button className="button primary" onClick={handleApplySelectedAiDiffs} type="button" disabled={saving}>
+                    {saving ? "应用中..." : `应用已选 ${selectedAiDiffIds.length} 项`}
+                  </button>
+                </div>
+              </div>
+              <div className="entity-note">
+                这里展示的是 AI 文案包和当前后台内容之间的白名单差异。你可以逐项勾选，只导入你认可的文案。
+              </div>
+              <div className="admin-ai-diff-list">
+                {pendingAiImport.diffs.map((item) => {
+                  const checked = selectedAiDiffIds.includes(item.id);
+
+                  return (
+                    <label key={item.id} className={`card admin-ai-diff-card ${checked ? "selected" : ""}`}>
+                      <div className="admin-ai-diff-head">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setSelectedAiDiffIds((current) =>
+                              event.target.checked ? [...current, item.id] : current.filter((value) => value !== item.id),
+                            )
+                          }
+                        />
+                        <strong>{item.label}</strong>
+                      </div>
+                      <div className="admin-ai-diff-grid">
+                        <div>
+                          <div className="entity-note">当前内容</div>
+                          <div className="prose-block">{item.currentValue}</div>
+                        </div>
+                        <div>
+                          <div className="entity-note">AI 建议</div>
+                          <div className="prose-block">{item.nextValue}</div>
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="card admin-panel">
+            <div className="admin-toolbar">
+              <h3>AI 改稿工作流</h3>
+              <button className="button secondary" onClick={handleCopyInstructions} type="button" disabled={copyingInstructions}>
+                {copyingInstructions ? "复制中..." : "复制外部 AI 指令"}
+              </button>
+            </div>
+            <div className="entity-note">
+              推荐顺序：先点“导出 AI 文案包”，再把下方指令和导出的 JSON 一起发给外部 AI。对方改完后，再点“导入 AI 文案包”回传到网站。服务端会按白名单过滤，只接收允许修改的文案字段。
+            </div>
+            <label className="admin-field admin-full-span">
+              <span>发给外部 AI 的标准指令</span>
+              <textarea value={externalAiInstructions} readOnly />
+            </label>
+          </div>
+
           {activeTab === "site" ? (
             <div className="card admin-panel">
               <h2>站点设置</h2>

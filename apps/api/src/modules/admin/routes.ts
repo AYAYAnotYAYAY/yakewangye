@@ -18,7 +18,12 @@ import {
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
-import { restoreBackupBundle, serializeBackupBundle } from "../../lib/storage/backup-repository";
+import {
+  restoreAiCopyPackage,
+  restoreBackupBundle,
+  serializeAiCopyPackageBundle,
+  serializeBackupBundle,
+} from "../../lib/storage/backup-repository";
 import { ensureUploadsStorage, inferMimeTypeFromFileName } from "../../lib/storage/storage-paths";
 import { UploadOffsetMismatchError, uploadSessionRepository } from "../../lib/storage/upload-session-repository";
 
@@ -316,6 +321,21 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     return reply.send(payload);
   });
 
+  app.get("/api/admin/backup/ai-copy", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const fileName = `quanyu-ai-copy-package-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    const payload = await serializeAiCopyPackageBundle();
+
+    reply.header("Content-Type", "application/json; charset=utf-8");
+    reply.header("Content-Disposition", `attachment; filename="${fileName}"`);
+    return reply.send(payload);
+  });
+
   app.post("/api/admin/backup/restore", async (request, reply) => {
     const admin = requireAdmin(request, reply);
 
@@ -354,6 +374,43 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         return reply.status(400).send({
           ok: false,
           error: error.message,
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/admin/backup/restore-ai-copy", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const file = await request.file();
+
+    if (!file) {
+      return reply.status(400).send({
+        ok: false,
+        error: "backup_file_required",
+      });
+    }
+
+    const input = await file.toBuffer();
+
+    try {
+      const restored = await restoreAiCopyPackage(input);
+      return {
+        ok: true,
+        restoredAt: restored.restoredAt,
+      };
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          ok: false,
+          error: "invalid_ai_copy_file",
+          detail: error.flatten(),
         });
       }
 
