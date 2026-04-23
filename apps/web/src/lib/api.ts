@@ -509,6 +509,59 @@ export async function saveContent(content: CmsContent, token: string) {
   return (await response.json()) as { ok: true; content: CmsContent };
 }
 
+function getDownloadFileName(response: Response, fallback: string) {
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const match = disposition.match(/filename="([^"]+)"/i);
+  return match?.[1] ?? fallback;
+}
+
+export async function downloadAdminBackup(token: string) {
+  const response = await fetchWithFallback("/api/admin/backup", {
+    headers: createAdminHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "backup_download_failed"));
+  }
+
+  return {
+    fileName: getDownloadFileName(response, `quanyu-backup-${Date.now()}.json`),
+    blob: await response.blob(),
+  };
+}
+
+export async function restoreAdminBackup(file: File, token: string) {
+  const formData = new FormData();
+  formData.set("file", file);
+
+  const response = await fetchWithFallback("/api/admin/backup/restore", {
+    method: "POST",
+    headers: createAdminHeaders(token),
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "backup_restore_failed"));
+  }
+
+  return (await response.json()) as {
+    ok: true;
+    restoredAt: string;
+    summary: {
+      articleCount: number;
+      doctorCount: number;
+      serviceCount: number;
+      pricingCount: number;
+      galleryCount: number;
+      pageCount: number;
+      chatSessionCount: number;
+      mediaAssetCount: number;
+      mediaFolderCount: number;
+      uploadFileCount: number;
+    };
+  };
+}
+
 export async function uploadFile(
   file: File,
   token: string,

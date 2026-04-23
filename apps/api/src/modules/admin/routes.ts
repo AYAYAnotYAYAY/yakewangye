@@ -18,6 +18,7 @@ import {
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
+import { restoreBackupBundle, serializeBackupBundle } from "../../lib/storage/backup-repository";
 import { ensureUploadsStorage, inferMimeTypeFromFileName } from "../../lib/storage/storage-paths";
 import { UploadOffsetMismatchError, uploadSessionRepository } from "../../lib/storage/upload-session-repository";
 
@@ -298,6 +299,66 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       ok: true,
       content,
     };
+  });
+
+  app.get("/api/admin/backup", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const fileName = `quanyu-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    const payload = await serializeBackupBundle();
+
+    reply.header("Content-Type", "application/json; charset=utf-8");
+    reply.header("Content-Disposition", `attachment; filename="${fileName}"`);
+    return reply.send(payload);
+  });
+
+  app.post("/api/admin/backup/restore", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const file = await request.file();
+
+    if (!file) {
+      return reply.status(400).send({
+        ok: false,
+        error: "backup_file_required",
+      });
+    }
+
+    const input = await file.toBuffer();
+
+    try {
+      const restored = await restoreBackupBundle(input);
+      return {
+        ok: true,
+        restoredAt: restored.restoredAt,
+        summary: restored.bundle.summary,
+      };
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return reply.status(400).send({
+          ok: false,
+          error: "invalid_backup_file",
+          detail: error.flatten(),
+        });
+      }
+
+      if (error instanceof Error && error.message === "invalid_backup_upload_path") {
+        return reply.status(400).send({
+          ok: false,
+          error: error.message,
+        });
+      }
+
+      throw error;
+    }
   });
 
   app.get("/api/admin/media-library", async (request, reply) => {

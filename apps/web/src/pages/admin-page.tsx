@@ -12,17 +12,19 @@ import type {
 import {
   type AdminStatus,
   ADMIN_TOKEN_STORAGE_KEY,
+  downloadAdminBackup,
   fetchAdminContent,
   fetchAdminMe,
   fetchAdminStatus,
   fetchChatSessions,
   fetchMediaLibrary,
   loginAdmin,
+  restoreAdminBackup,
   saveContent,
   setupAdmin,
 } from "../lib/api";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MediaField, MediaLibraryManager } from "../components/admin-media";
 
 type AdminPageProps = {
@@ -230,11 +232,14 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [activeTab, setActiveTab] = useState<TabKey>("site");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [mediaLibrary, setMediaLibrary] = useState<MediaLibraryState>({
     folders: [],
     assets: [],
   });
+  const backupFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setDraft(content);
@@ -273,6 +278,73 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     }
   };
 
+  const reloadAdminData = async () => {
+    const [nextContent, nextSessions, nextLibrary] = await Promise.all([
+      fetchAdminContent(adminToken),
+      fetchChatSessions(adminToken).catch(() => []),
+      fetchMediaLibrary(adminToken)
+        .then((response) => response.library)
+        .catch(() => ({
+          folders: [],
+          assets: [],
+        })),
+    ]);
+
+    setDraft(nextContent);
+    setSessions(nextSessions);
+    setMediaLibrary(nextLibrary);
+    onSaved(nextContent);
+  };
+
+  const handleBackupDownload = async () => {
+    setBackingUp(true);
+
+    try {
+      const { blob, fileName } = await downloadAdminBackup(adminToken);
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      window.alert(`备份失败: ${String(error)}`);
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
+  const handleRestoreFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    const confirmed = window.confirm("恢复会覆盖当前站点文字、配置、素材索引、聊天记录和上传文件，是否继续？");
+
+    if (!confirmed) {
+      return;
+    }
+
+    setRestoring(true);
+
+    try {
+      const result = await restoreAdminBackup(file, adminToken);
+      await reloadAdminData();
+      window.alert(
+        `恢复成功。\n文章 ${result.summary.articleCount} 条，页面 ${result.summary.pageCount} 个，聊天 ${result.summary.chatSessionCount} 条，上传文件 ${result.summary.uploadFileCount} 个。`,
+      );
+    } catch (error) {
+      window.alert(`恢复失败: ${String(error)}`);
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   return (
     <div className="container admin-page">
       <div className="admin-header card">
@@ -286,6 +358,17 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           <a className="button secondary" href="/">
             返回前台
           </a>
+          <button className="button secondary" onClick={handleBackupDownload} type="button" disabled={backingUp || restoring}>
+            {backingUp ? "导出中..." : "导出备份"}
+          </button>
+          <button
+            className="button secondary"
+            onClick={() => backupFileInputRef.current?.click()}
+            type="button"
+            disabled={backingUp || restoring}
+          >
+            {restoring ? "恢复中..." : "从文件恢复"}
+          </button>
           <button className="button secondary" onClick={onLogout} type="button">
             退出登录
           </button>
@@ -293,6 +376,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             {saving ? "保存中..." : "保存全部内容"}
           </button>
         </div>
+        <input ref={backupFileInputRef} type="file" accept="application/json,.json" hidden onChange={handleRestoreFile} />
       </div>
 
       <div className="admin-layout">
