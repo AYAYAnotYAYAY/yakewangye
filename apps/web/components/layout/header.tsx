@@ -1,8 +1,12 @@
-import type { SiteSettings } from "@quanyu/shared";
+import type { Language, SiteSettings } from "@quanyu/shared";
 import { useEffect, useRef, useState } from "react";
+import { SUPPORTED_LANGUAGES, type UiDictionary } from "../../src/lib/i18n";
 
 type HeaderProps = {
   settings: SiteSettings;
+  language: Language;
+  dictionary: UiDictionary;
+  onLanguageChange: (language: Language) => void;
 };
 
 function toAnchor(href: string): string {
@@ -11,7 +15,7 @@ function toAnchor(href: string): string {
   return href;
 }
 
-export function Header({ settings }: HeaderProps) {
+export function Header({ settings, language, dictionary, onLanguageChange }: HeaderProps) {
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const navRef = useRef<HTMLElement>(null);
@@ -52,13 +56,25 @@ export function Header({ settings }: HeaderProps) {
               {item.label}
             </a>
           ))}
+          <div className="site-language-switcher" aria-label={dictionary.langLabel}>
+            {SUPPORTED_LANGUAGES.map((item) => (
+              <button
+                key={item}
+                type="button"
+                className={`site-language-chip${item === language ? " active" : ""}`}
+                onClick={() => onLanguageChange(item)}
+              >
+                {item.toUpperCase()}
+              </button>
+            ))}
+          </div>
           <a
             className="button primary site-nav-cta"
             href={settings.primaryContact.telegramUrl}
             target="_blank"
             rel="noopener noreferrer"
           >
-            💬 Telegram 咨询
+            💬 {dictionary.telegramCta}
           </a>
         </nav>
 
@@ -76,6 +92,21 @@ export function Header({ settings }: HeaderProps) {
 
       {/* Mobile drawer */}
       <div className={`site-nav-mobile${menuOpen ? " open" : ""}`}>
+        <div className="site-nav-mobile-languages">
+          {SUPPORTED_LANGUAGES.map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={`site-language-chip${item === language ? " active" : ""}`}
+              onClick={() => {
+                onLanguageChange(item);
+                handleNavClick();
+              }}
+            >
+              {item.toUpperCase()}
+            </button>
+          ))}
+        </div>
         {settings.navigation.map((item) => (
           <a key={item.id} href={toAnchor(item.href)} onClick={handleNavClick}>
             {item.label}
@@ -88,7 +119,7 @@ export function Header({ settings }: HeaderProps) {
           rel="noopener noreferrer"
           onClick={handleNavClick}
         >
-          💬 Telegram 咨询
+          💬 {dictionary.telegramCta}
         </a>
       </div>
     </header>

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const languageSchema = z.enum(["zh", "ru", "en"]);
+
 export const navigationItemSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -266,7 +268,7 @@ export const triageResultSchema = z.object({
 
 export const chatSessionSchema = z.object({
   sessionId: z.string(),
-  language: z.enum(["zh", "ru", "en"]),
+  language: languageSchema,
   visitorId: z.string(),
   startedAt: z.string(),
   updatedAt: z.string(),
@@ -285,8 +287,16 @@ export const cmsContentSchema = z.object({
   pages: z.array(landingPageSchema),
   aiConfig: aiConfigSchema,
   telegramConfig: telegramConfigSchema,
+  i18n: z
+    .object({
+      zh: z.unknown().optional(),
+      ru: z.unknown().optional(),
+      en: z.unknown().optional(),
+    })
+    .optional(),
 });
 
+export type Language = z.infer<typeof languageSchema>;
 export type SiteSettings = z.infer<typeof siteSettingsSchema>;
 export type HeroSection = z.infer<typeof heroSectionSchema>;
 export type ServicesSection = z.infer<typeof servicesSectionSchema>;
@@ -541,6 +551,339 @@ const telegramConfigSeed: TelegramConfig = {
     "新问诊线索\n会话ID: {{sessionId}}\n访客ID: {{visitorId}}\n意图: {{intent}}\n紧急度: {{urgent}}\n用户消息: {{message}}\n建议动作: {{recommendedAction}}\n下一步: {{suggestedNextStep}}",
 };
 
+const i18nSeed: Partial<Record<Language, unknown>> = {
+  ru: {
+    siteSettings: {
+      topbarNotice: "Консультации на китайском, русском и английском языках, AI-первичный опрос и перевод в Telegram",
+      footerDescription:
+        "Клиника «Цюаньюй» помогает сначала понять направления лечения, объем услуг и способ консультации, а затем перейти к общению с администратором или в Telegram.",
+      navigation: [
+        { id: "ai-chat", label: "AI-опрос" },
+        { id: "services", label: "Услуги" },
+        { id: "doctors", label: "Врачи" },
+        { id: "pricing", label: "Цены" },
+        { id: "articles", label: "Статьи" },
+        { id: "gallery", label: "Клиника" },
+        { id: "contact", label: "Контакты" },
+      ],
+    },
+    homePage: {
+      title: "泉寓门诊 | Стоматологическая консультация в Хэйхэ и помощь для пациентов из-за рубежа",
+      seoTitle: "泉寓门诊 | Стоматология в Хэйхэ, имплантация, протезирование и консультации",
+      seoDescription:
+        "Имплантация, восстановление зубов, неотложные обращения и консультации для пациентов из Китая и из-за рубежа. Сначала онлайн-опрос, затем связь через Telegram.",
+      sections: [
+        {
+          eyebrow: "Стоматологическая консультация в Хэйхэ",
+          title: "Имплантация, протезирование и острая зубная боль: сначала уточните ситуацию, затем продолжайте общение",
+          description:
+            "Клиника «Цюаньюй» принимает местных и зарубежных пациентов. Вы можете сначала описать симптомы, цель лечения и вопросы по цене, а затем перейти к общению в Telegram.",
+          actions: [{ label: "Перейти в Telegram" }, { label: "Начать онлайн-опрос" }],
+          highlights: [
+            { label: "Каналы связи", value: "AI + Telegram" },
+            { label: "Языки", value: "Китайский / Русский / Английский" },
+            { label: "Основные запросы", value: "Имплантация / Протезирование / Срочная помощь" },
+          ],
+          aiPanel: {
+            title: "Сначала кратко опишите ситуацию",
+            description:
+              "Укажите симптомы, длительность, уровень боли и наличие снимков, чтобы понять, нужен ли быстрый перевод к администратору.",
+            steps: [
+              "1. Опишите симптомы, отсутствие зубов или интересующий вас проект",
+              "2. Получите первичную оценку типа проблемы и приоритета",
+              "3. При необходимости продолжите общение в Telegram",
+            ],
+          },
+        },
+        {
+          eyebrow: "Основные направления",
+          title: "Частые стоматологические запросы и что важно уточнить заранее",
+          description:
+            "На главной странице сначала объясняются самые частые услуги, подходящие случаи и ключевые вопросы для консультации.",
+          items: [
+            {
+              tag: "Имплантация",
+              title: "Одиночная / множественная / полу-челюстная имплантация",
+              summary:
+                "Подходит при отсутствии зубов и снижении жевательной функции. До консультации желательно сообщить зону отсутствия зубов, количество и наличие снимков.",
+              ctaLabel: "Уточнить план и оценку",
+            },
+            {
+              tag: "Протезирование",
+              title: "Коронки / мосты / съемные протезы / эстетическое восстановление",
+              summary:
+                "Подходит при дефектах зубов, замене старых конструкций, восстановлении внешнего вида и функции.",
+              ctaLabel: "Уточнить материалы и сроки",
+            },
+            {
+              tag: "Срочно",
+              title: "Боль / кровоточивость / подвижность / воспаление",
+              summary:
+                "При боли, кровоточивости десен, подвижности зубов или воспалении лучше обратиться как можно раньше для оценки срочности.",
+              ctaLabel: "Понять срочность обращения",
+            },
+          ],
+        },
+        {
+          eyebrow: "Порядок консультации",
+          title: "От первого обращения до связи с администратором без лишних шагов",
+          description:
+            "Сайт сначала объясняет спектр услуг, способ связи и логику консультации, чтобы пациент быстрее дошел до полезного общения.",
+          steps: [
+            { title: "Отправьте исходные данные", summary: "Опишите симптомы, отсутствие зубов, цель лечения и наличие снимков." },
+            { title: "Сформируйте вопросы", summary: "После первичной сортировки проще обсудить имплантацию, протезирование, срочность и цену." },
+            { title: "Перейдите в Telegram", summary: "Если нужно продолжить, отправьте дополнительные материалы и вопросы в Telegram." },
+            { title: "Подключается администратор", summary: "Далее уточняются направление лечения, подготовка материалов и план визита." },
+          ],
+        },
+        {
+          eyebrow: "Ключевая информация",
+          title: "Самое важное перед обращением видно сразу",
+          description:
+            "Контакты, адрес, способ связи и дальнейший шаг собраны на одной странице, чтобы не приходилось искать информацию по сайту.",
+          metrics: [
+            { label: "Телефон", value: "+86 9619527988", note: "Можно продолжить консультацию по телефону или в Telegram" },
+            { label: "Адрес", value: "黑河市环城东路33号", note: "黑龙江省黑河市爱辉区花园街道环城东路33号" },
+            { label: "Связь с администратором", value: "Telegram", note: "Удобно отправлять снимки, уточнять процесс и запись" },
+          ],
+        },
+      ],
+    },
+    articles: [
+      {
+        id: "article-1",
+        title: "Имплантация зубов в Хэйхэ: кому подходит, как проходит и как подготовиться к консультации",
+        category: "Имплантация",
+        excerpt:
+          "Кратко о первичной оценке, снимках, этапах лечения, восстановлении и способе связи для пациентов из-за рубежа.",
+        content:
+          "Вопрос о том, подходит ли имплантация, решается после оценки отсутствующих зубов, состояния кости, общей стоматологической ситуации и рентгенологических данных. До консультации желательно сообщить, каких зубов не хватает, как давно это произошло, проводилось ли ранее лечение и есть ли панорамный снимок или КТ. Для пациентов из-за рубежа полезно заранее обсудить удобные даты, подготовку документов и желаемый диапазон стоимости.",
+        seoTitle: "Имплантация зубов в Хэйхэ | консультация, этапы и подготовка",
+        seoDescription:
+          "Узнайте, какие данные нужны для первичной оценки имплантации, как проходит консультация и как удобнее подготовиться к визиту.",
+      },
+    ],
+    doctors: [
+      {
+        id: "doctor-1",
+        title: "Главный врач по имплантации и протезированию",
+        summary:
+          "Занимается клинической работой в направлениях имплантации и протезирования, помогает на этапе первичной оценки и обсуждения дальнейшего плана лечения.",
+        specialties: ["Имплантация", "Протезирование", "Сложные случаи"],
+        experience: "12 лет клинической практики",
+      },
+    ],
+    services: [
+      {
+        id: "service-1",
+        name: "Имплантация зубов",
+        category: "Восстановительное лечение",
+        summary:
+          "Первичная оценка и обсуждение направления лечения при отсутствии зубов, снижении жевательной функции и необходимости восстановления.",
+        details:
+          "Поддерживаются консультации по одиночной, множественной и полу-челюстной имплантации. Окончательный план определяется после осмотра и снимков.",
+      },
+    ],
+    pricing: [
+      {
+        id: "pricing-1",
+        name: "Первичная оценка перед имплантацией",
+        category: "Диагностика",
+        notes:
+          "Указана ориентировочная стоимость первичного этапа. Итоговая цена зависит от снимков, обследования и реальной клинической ситуации.",
+      },
+    ],
+    gallery: [
+      {
+        id: "gallery-1",
+        title: "Зона приема пациентов",
+        summary: "Видео и изображения помогают заранее понять обстановку и организацию приема.",
+      },
+    ],
+    pages: [
+      {
+        id: "page-1",
+        title: "Цены и способ консультации",
+        summary: "Что влияет на цену, как запрашивать оценку и почему окончательная стоимость подтверждается после диагностики.",
+        content:
+          "Стоимость стоматологического лечения зависит от типа услуги, объема восстановления, выбранных материалов, исходной ситуации в полости рта и необходимости дополнительных обследований. Цены на сайте подходят только как предварительный ориентир. Для точной оценки лучше сначала отправить основные данные и снимки через онлайн-опрос или Telegram, после чего администратор поможет продолжить общение.",
+        seoTitle: "泉寓门诊 | цены, первичная оценка и порядок консультации",
+        seoDescription:
+          "Узнайте, как формируется стоимость стоматологического лечения, какие данные нужны для предварительной оценки и как продолжить консультацию.",
+      },
+    ],
+    aiConfig: {
+      fallbackReply:
+        "Я помогу с первичным опросом. Опишите основную проблему, сколько она длится, есть ли боль или кровоточивость и имеются ли снимки, после чего я подскажу следующий шаг.",
+    },
+  },
+  en: {
+    siteSettings: {
+      topbarNotice: "Chinese / Russian / English consultation with AI pre-screening and Telegram handoff",
+      footerDescription:
+        "Quanyu Clinic helps patients first understand treatment scope, consultation flow and contact options, then continue with staff through Telegram or direct contact.",
+      navigation: [
+        { id: "ai-chat", label: "AI Triage" },
+        { id: "services", label: "Services" },
+        { id: "doctors", label: "Doctors" },
+        { id: "pricing", label: "Pricing" },
+        { id: "articles", label: "Articles" },
+        { id: "gallery", label: "Clinic" },
+        { id: "contact", label: "Contact" },
+      ],
+    },
+    homePage: {
+      title: "泉寓门诊 | Dental Consultation in Heihe for Local and Cross-Border Patients",
+      seoTitle: "泉寓门诊 | Dental Consultation, Implant and Restorative Care in Heihe",
+      seoDescription:
+        "Consultation for implants, restorative treatment, urgent dental issues and cross-border visits. Start with online triage, then continue through Telegram.",
+      sections: [
+        {
+          eyebrow: "Dental Consultation in Heihe",
+          title: "Implants, restorations and tooth pain: understand the direction first, then continue the conversation",
+          description:
+            "Quanyu Clinic provides dental consultation for local and cross-border patients. You can first describe symptoms, treatment goals and pricing questions, then continue with staff in Telegram.",
+          actions: [{ label: "Open Telegram" }, { label: "Start Online Triage" }],
+          highlights: [
+            { label: "Consultation Channels", value: "AI + Telegram" },
+            { label: "Languages", value: "Chinese / Russian / English" },
+            { label: "Common Needs", value: "Implants / Restorations / Urgent Care" },
+          ],
+          aiPanel: {
+            title: "Start by describing your case",
+            description:
+              "Share your symptoms, duration, pain level and whether you already have imaging so we can judge whether faster human follow-up is needed.",
+            steps: [
+              "1. Describe symptoms, missing teeth or the service you want to ask about",
+              "2. Get an initial sense of issue type and priority",
+              "3. Move to Telegram when further communication is needed",
+            ],
+          },
+        },
+        {
+          eyebrow: "Core Services",
+          title: "Common dental services and what to clarify before consultation",
+          description:
+            "The homepage explains the services patients ask about most often, the common indications and the key points worth clarifying in advance.",
+          items: [
+            {
+              tag: "Implants",
+              title: "Single / Multiple / Half-arch Implant Consultation",
+              summary:
+                "Suitable for missing teeth and functional restoration. It helps to share the location, number of missing teeth and any existing imaging before consultation.",
+              ctaLabel: "Ask About Plan and Evaluation",
+            },
+            {
+              tag: "Restoration",
+              title: "Crowns / Bridges / Dentures / Esthetic Restoration",
+              summary:
+                "Suitable for tooth defects, replacement of previous restorations, esthetic improvement and chewing function recovery.",
+              ctaLabel: "Ask About Materials and Timeline",
+            },
+            {
+              tag: "Urgent",
+              title: "Pain / Bleeding / Mobility / Inflammation",
+              summary:
+                "Tooth pain, gum bleeding, tooth mobility or inflammation should be discussed early so the urgency can be judged properly.",
+              ctaLabel: "Check Urgency First",
+            },
+          ],
+        },
+        {
+          eyebrow: "Consultation Flow",
+          title: "From first visit to human follow-up with fewer extra steps",
+          description:
+            "The site first explains service scope, communication options and the consultation path, helping visitors move into useful conversation faster.",
+          steps: [
+            { title: "Submit Basic Information", summary: "Describe symptoms, missing teeth, treatment goals and whether you already have imaging." },
+            { title: "Clarify Consultation Focus", summary: "Use the initial triage to narrow the conversation around implants, restorations, urgency or pricing." },
+            { title: "Move to Telegram", summary: "When more discussion is needed, continue by sending questions and imaging through Telegram." },
+            { title: "Staff Follow-up", summary: "Then confirm treatment direction, information to prepare and visit arrangements." },
+          ],
+        },
+        {
+          eyebrow: "Key Information",
+          title: "The most important pre-visit details appear first",
+          description:
+            "Phone, address, communication channel and next steps are shown clearly on one page so visitors do not need to search around.",
+          metrics: [
+            { label: "Phone", value: "+86 9619527988", note: "Continue by phone or through Telegram" },
+            { label: "Address", value: "黑河市环城东路33号", note: "黑龙江省黑河市爱辉区花园街道环城东路33号" },
+            { label: "Human Handoff", value: "Telegram", note: "Useful for sharing imaging, process questions and scheduling" },
+          ],
+        },
+      ],
+    },
+    articles: [
+      {
+        id: "article-1",
+        title: "Dental Implant Consultation in Heihe: suitability, workflow and preparation",
+        category: "Implants",
+        excerpt:
+          "An overview of initial assessment, imaging, treatment steps, recovery concerns and consultation flow for cross-border patients.",
+        content:
+          "Whether dental implants are appropriate depends on the pattern of tooth loss, bone condition, overall oral status and imaging findings. Before consultation, it helps to explain which teeth are missing, how long they have been missing, whether prior treatment was done and whether you already have a panoramic image or CT scan. For cross-border patients, discussing visit timing, required materials and the expected pricing range in advance can make follow-up communication more efficient.",
+        seoTitle: "Heihe Dental Implant Guide | assessment, workflow and preparation",
+        seoDescription:
+          "Learn what information is useful for an initial implant consultation, how the workflow is discussed and how to prepare before a visit.",
+      },
+    ],
+    doctors: [
+      {
+        id: "doctor-1",
+        title: "Lead Physician for Implant and Restorative Care",
+        summary:
+          "Focused on implant and restorative clinical work, with emphasis on missing-tooth rehabilitation, treatment planning discussion and initial case evaluation.",
+        specialties: ["Implants", "Restorations", "Complex Cases"],
+        experience: "12 years of clinical experience",
+      },
+    ],
+    services: [
+      {
+        id: "service-1",
+        name: "Dental Implants",
+        category: "Restorative Treatment",
+        summary:
+          "Initial evaluation and treatment-direction consultation for missing teeth, reduced chewing function and restorative needs.",
+        details:
+          "Supports consultation for single, multiple and half-arch implant cases. Final planning depends on examination findings and imaging.",
+      },
+    ],
+    pricing: [
+      {
+        id: "pricing-1",
+        name: "Initial Implant Evaluation",
+        category: "Diagnostics",
+        notes:
+          "The listed price is a starting reference for the first evaluation step. Final fees depend on examination, imaging and the actual oral condition.",
+      },
+    ],
+    gallery: [
+      {
+        id: "gallery-1",
+        title: "Reception Area",
+        summary: "Images and video help visitors understand the clinic environment before arrival.",
+      },
+    ],
+    pages: [
+      {
+        id: "page-1",
+        title: "Pricing and Consultation Guide",
+        summary: "Learn what affects pricing, how to request an estimate and why final costs are confirmed after assessment.",
+        content:
+          "Dental treatment costs usually depend on the treatment category, restoration scope, material choice, baseline oral condition and whether additional examinations are required. Website pricing should be treated as an initial reference only. For a more useful estimate, start by sending your basic case information and any imaging through the online triage or Telegram, then continue with staff for the next step.",
+        seoTitle: "泉寓门诊 | pricing, initial evaluation and consultation flow",
+        seoDescription:
+          "Understand how dental fees are assessed, what affects the estimate and how to continue consultation through online triage or Telegram.",
+      },
+    ],
+    aiConfig: {
+      fallbackReply:
+        "I can help with an initial triage. Please describe your main concern, how long it has lasted, whether there is pain or bleeding, and whether you already have imaging, then I will suggest the next step.",
+    },
+  },
+};
+
 export const cmsContentSeed: CmsContent = {
   siteSettings: siteSettingsSeed,
   homePage: homePageSeed,
@@ -552,4 +895,5 @@ export const cmsContentSeed: CmsContent = {
   pages: pagesSeed,
   aiConfig: aiConfigSeed,
   telegramConfig: telegramConfigSeed,
+  i18n: i18nSeed,
 };

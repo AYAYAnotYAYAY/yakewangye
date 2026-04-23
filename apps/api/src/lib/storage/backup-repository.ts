@@ -184,6 +184,8 @@ function buildAiPromptTemplate(content: z.infer<typeof cmsContentSchema>) {
     "你正在为一个真实线上网站改写文案。",
     `品牌名：${content.siteSettings.brandName}`,
     "你的任务：先参考同类牙科/医疗服务网站的介绍方式，再重写这个网站的首页、服务、文章摘要和页面介绍文案。",
+    "这个站点使用三语内容结构：中文是主基底语言，俄语和英语写在 contentSnapshot.i18n.ru / contentSnapshot.i18n.en 覆盖层。",
+    "中文文案写回 contentSnapshot 主结构；俄语、英语文案分别写回各自的 i18n 覆盖层。",
     "必须遵守：不要改 JSON 结构、不要改 id/slug/url/电话号码/地址/Telegram/价格数值/素材链接，除非字段本身就是纯介绍文案。",
     "注意：系统恢复时只接受白名单中的文案字段，其他字段就算改了也会被自动忽略。",
     "优先优化：信任感、专业度、跨境就诊说明、咨询转化率、语言自然度。",
@@ -225,6 +227,7 @@ function createAiCopyPackage(params: { content: z.infer<typeof cmsContentSchema>
         "先理解 siteProfile，明确这是牙科诊所营销站而不是纯资讯站。",
         "浏览同类牙科/门诊网站，提炼他们的首页卖点、服务介绍、信任表达和行动号召。",
         "基于 contentSnapshot 改写标题、描述、摘要、正文等纯文案字段。",
+        "中文写回 contentSnapshot 主结构，俄语和英语分别写回 contentSnapshot.i18n.ru / contentSnapshot.i18n.en。",
         "保留结构和事实信息，输出完整 JSON。",
       ],
       outputRequirement: "返回内容包时，结构必须与 contentSnapshot 完全一致，可直接被本站恢复。",
@@ -251,6 +254,7 @@ function createAiCopyPackage(params: { content: z.infer<typeof cmsContentSchema>
         { path: "services[*].title/summary", instruction: "可重写为更像真实门诊服务介绍。" },
         { path: "doctors[*].name/title/bio", instruction: "可润色表达，但不要虚构资历。" },
         { path: "pages[*].title/summary/content/seoTitle/seoDescription", instruction: "可全面重写。" },
+        { path: "i18n.ru / i18n.en", instruction: "俄语和英语文案应写入各自的多语言覆盖层，结构与主内容对应。" },
         { path: "aiConfig", instruction: "除非用户明确要求，不要修改 API、模型或提示词配置。" },
       ],
     },
@@ -439,6 +443,7 @@ function sanitizeAiCopyContent(current: CmsContent, incoming: CmsContent): CmsCo
     })),
     aiConfig: current.aiConfig,
     telegramConfig: current.telegramConfig,
+    i18n: incoming.i18n ?? current.i18n,
   };
 }
 
@@ -457,6 +462,7 @@ export async function createBackupBundle(): Promise<BackupBundle> {
     readJsonFile(paths.mediaLibraryFilePath, mediaLibraryStateSchema, mediaLibraryStateSchema.parse({ folders: [], assets: [] })),
     listUploadFiles(paths.uploadsDir),
   ]);
+  const contentWithI18n = content.i18n ? content : { ...content, i18n: cmsContentSeed.i18n };
 
   return backupBundleSchema.parse({
     format: BACKUP_FORMAT,
@@ -467,7 +473,7 @@ export async function createBackupBundle(): Promise<BackupBundle> {
       dataRoot: paths.dataRoot,
     },
     summary: {
-      articleCount: content.articles.length,
+      articleCount: contentWithI18n.articles.length,
       doctorCount: content.doctors.length,
       serviceCount: content.services.length,
       pricingCount: content.pricing.length,
@@ -479,7 +485,7 @@ export async function createBackupBundle(): Promise<BackupBundle> {
       uploadFileCount: uploadFiles.length,
     },
     data: {
-      content,
+      content: contentWithI18n,
       adminConfig,
       chatSessions,
       mediaLibrary,
@@ -499,7 +505,7 @@ export async function createAiCopyPackageBundle() {
   await ensureContentStorage();
   const content = await readJsonFile(paths.contentFilePath, cmsContentSchema, cmsContentSeed);
   return createAiCopyPackage({
-    content,
+    content: content.i18n ? content : { ...content, i18n: cmsContentSeed.i18n },
     dataRoot: paths.dataRoot,
   });
 }

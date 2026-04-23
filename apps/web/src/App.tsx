@@ -1,12 +1,21 @@
-import type { Article, CmsContent, Doctor, GalleryAsset, LandingPage, PricingItem, ServiceItem } from "@quanyu/shared";
+import type { Article, CmsContent, Doctor, GalleryAsset, LandingPage, Language, PricingItem, ServiceItem } from "@quanyu/shared";
 import { cmsContentSeed } from "@quanyu/shared";
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Footer } from "../components/layout/footer";
 import { Header } from "../components/layout/header";
 import { SectionRenderer } from "../components/section-renderer";
 import { ChatWidget } from "./components/chat-widget";
-import { fetchContent, resolveAssetUrl } from "./lib/api";
+import { detectPreferredLanguage, fetchContent, resolveAssetUrl } from "./lib/api";
+import {
+  DEFAULT_LANGUAGE,
+  normalizeLanguage,
+  readStoredLanguage,
+  resolveContentForLanguage,
+  uiDictionary,
+  writeStoredLanguage,
+  type UiDictionary,
+} from "./lib/i18n";
 import { AdminPage } from "./pages/admin-page";
 import { MobileMediaPage } from "./pages/mobile-media-page";
 
@@ -46,23 +55,48 @@ function writeCachedContent(content: CmsContent) {
   }
 }
 
-function PageShell(props: { content: CmsContent; children: ReactNode }) {
+function updateUrlLanguage(language: Language) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("lang", language);
+  window.history.replaceState({}, "", url.toString());
+}
+
+function readUrlLanguage() {
+  return normalizeLanguage(new URL(window.location.href).searchParams.get("lang"));
+}
+
+function PageShell(props: {
+  content: CmsContent;
+  language: Language;
+  dictionary: UiDictionary;
+  onLanguageChange: (language: Language) => void;
+  children: ReactNode;
+}) {
   return (
     <main id="top">
-      <Header settings={props.content.siteSettings} />
+      <Header
+        settings={props.content.siteSettings}
+        language={props.language}
+        dictionary={props.dictionary}
+        onLanguageChange={props.onLanguageChange}
+      />
       {props.children}
-      <Footer settings={props.content.siteSettings} />
-      <ChatWidget telegramUrl={props.content.telegramConfig.contactUrl || props.content.siteSettings.primaryContact.telegramUrl} />
+      <Footer settings={props.content.siteSettings} dictionary={props.dictionary} />
+      <ChatWidget
+        telegramUrl={props.content.telegramConfig.contactUrl || props.content.siteSettings.primaryContact.telegramUrl}
+        language={props.language}
+        dictionary={props.dictionary}
+      />
     </main>
   );
 }
 
-function RuntimeNotice(props: { message: string }) {
+function RuntimeNotice(props: { message: string; dictionary: UiDictionary }) {
   return (
     <section className="runtime-notice-wrap">
       <div className="container">
         <div className="card runtime-notice-card">
-          <strong>当前显示的是兜底内容</strong>
+          <strong>{props.dictionary.runtimeFallbackTitle}</strong>
           <p>{props.message}</p>
         </div>
       </div>
@@ -70,7 +104,7 @@ function RuntimeNotice(props: { message: string }) {
   );
 }
 
-function EmptyState(props: { title: string; description: string }) {
+function EmptyState(props: { title: string; description: string; dictionary: UiDictionary }) {
   return (
     <section>
       <div className="container">
@@ -78,7 +112,7 @@ function EmptyState(props: { title: string; description: string }) {
           <h1>{props.title}</h1>
           <p>{props.description}</p>
           <a className="button secondary" href="/admin">
-            去后台添加内容
+            {props.dictionary.addContentCta}
           </a>
         </div>
       </div>
@@ -98,14 +132,14 @@ function MediaPreview(props: { src: string; alt: string; mediaType?: "image" | "
   return <img className="entity-image" src={resolveAssetUrl(props.src)} alt={props.alt} />;
 }
 
-function ArticleList(props: { items: Article[]; anchorId?: string }) {
+function ArticleList(props: { items: Article[]; anchorId?: string; dictionary: UiDictionary }) {
   return props.items.length ? (
     <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
-          <span className="eyebrow">文章</span>
-          <h2>文章内容与 SEO 入口</h2>
-          <p>文章可以在后台新建、修改标题、摘要、正文、封面图和 SEO 字段。</p>
+          <span className="eyebrow">{props.dictionary.articleEyebrow}</span>
+          <h2>{props.dictionary.articleTitle}</h2>
+          <p>{props.dictionary.articleDescription}</p>
         </div>
         <div className="grid-3">
           {props.items.map((item) => (
@@ -123,18 +157,22 @@ function ArticleList(props: { items: Article[]; anchorId?: string }) {
       </div>
     </section>
   ) : (
-    <EmptyState title="暂无文章" description="后台还没有录入文章内容。" />
+    <EmptyState
+      title={props.dictionary.emptyArticleTitle}
+      description={props.dictionary.emptyArticleDescription}
+      dictionary={props.dictionary}
+    />
   );
 }
 
-function DoctorList(props: { items: Doctor[]; anchorId?: string }) {
+function DoctorList(props: { items: Doctor[]; anchorId?: string; dictionary: UiDictionary }) {
   return props.items.length ? (
     <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
-          <span className="eyebrow">医生</span>
-          <h2>医生介绍</h2>
-          <p>姓名、职称、经验、擅长方向和头像都可以在后台维护。</p>
+          <span className="eyebrow">{props.dictionary.doctorEyebrow}</span>
+          <h2>{props.dictionary.doctorTitle}</h2>
+          <p>{props.dictionary.doctorDescription}</p>
         </div>
         <div className="grid-3">
           {props.items.map((item) => (
@@ -154,18 +192,22 @@ function DoctorList(props: { items: Doctor[]; anchorId?: string }) {
       </div>
     </section>
   ) : (
-    <EmptyState title="暂无医生资料" description="后台还没有录入医生介绍。" />
+    <EmptyState
+      title={props.dictionary.emptyDoctorTitle}
+      description={props.dictionary.emptyDoctorDescription}
+      dictionary={props.dictionary}
+    />
   );
 }
 
-function ServiceList(props: { items: ServiceItem[]; anchorId?: string }) {
+function ServiceList(props: { items: ServiceItem[]; anchorId?: string; dictionary: UiDictionary }) {
   return props.items.length ? (
     <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
-          <span className="eyebrow">服务</span>
-          <h2>服务介绍</h2>
-          <p>服务页会读取后台的服务列表，你可以在后台新增项目和说明。</p>
+          <span className="eyebrow">{props.dictionary.serviceEyebrow}</span>
+          <h2>{props.dictionary.serviceTitle}</h2>
+          <p>{props.dictionary.serviceDescription}</p>
         </div>
         <div className="grid-3">
           {props.items.map((item) => (
@@ -183,18 +225,22 @@ function ServiceList(props: { items: ServiceItem[]; anchorId?: string }) {
       </div>
     </section>
   ) : (
-    <EmptyState title="暂无服务内容" description="后台还没有录入服务介绍。" />
+    <EmptyState
+      title={props.dictionary.emptyServiceTitle}
+      description={props.dictionary.emptyServiceDescription}
+      dictionary={props.dictionary}
+    />
   );
 }
 
-function PricingList(props: { items: PricingItem[]; anchorId?: string }) {
+function PricingList(props: { items: PricingItem[]; anchorId?: string; dictionary: UiDictionary }) {
   return props.items.length ? (
     <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
-          <span className="eyebrow">价格</span>
-          <h2>价格说明</h2>
-          <p>价格项目、分类、备注都在后台维护，适合后续接不同渠道报价策略。</p>
+          <span className="eyebrow">{props.dictionary.pricingEyebrow}</span>
+          <h2>{props.dictionary.pricingTitle}</h2>
+          <p>{props.dictionary.pricingDescription}</p>
         </div>
         <div className="grid-3">
           {props.items.map((item) => (
@@ -211,25 +257,29 @@ function PricingList(props: { items: PricingItem[]; anchorId?: string }) {
       </div>
     </section>
   ) : (
-    <EmptyState title="暂无价格内容" description="后台还没有录入价格说明。" />
+    <EmptyState
+      title={props.dictionary.emptyPricingTitle}
+      description={props.dictionary.emptyPricingDescription}
+      dictionary={props.dictionary}
+    />
   );
 }
 
-function GalleryList(props: { items: GalleryAsset[]; anchorId?: string }) {
+function GalleryList(props: { items: GalleryAsset[]; anchorId?: string; dictionary: UiDictionary }) {
   return props.items.length ? (
     <section id={props.anchorId}>
       <div className="container">
         <div className="section-heading">
-          <span className="eyebrow">图册</span>
-          <h2>图册与视频展示</h2>
-          <p>支持图片和视频素材，后台可直接本地上传或从素材库复用。</p>
+          <span className="eyebrow">{props.dictionary.galleryEyebrow}</span>
+          <h2>{props.dictionary.galleryTitle}</h2>
+          <p>{props.dictionary.galleryDescription}</p>
         </div>
         <div className="grid-3">
           {props.items.map((item) => (
             <article key={item.id} className="card entity-card">
               <MediaPreview src={item.imageUrl} alt={item.title} mediaType={item.mediaType} />
               <div className="entity-body">
-                <div className="entity-meta">{item.mediaType === "video" ? "视频" : "图片"}</div>
+                <div className="entity-meta">{item.mediaType === "video" ? props.dictionary.videoLabel : props.dictionary.imageLabel}</div>
                 <h3>{item.title}</h3>
                 <p>{item.summary}</p>
               </div>
@@ -239,33 +289,37 @@ function GalleryList(props: { items: GalleryAsset[]; anchorId?: string }) {
       </div>
     </section>
   ) : (
-    <EmptyState title="暂无图册内容" description="后台还没有录入图册或视频内容。" />
+    <EmptyState
+      title={props.dictionary.emptyGalleryTitle}
+      description={props.dictionary.emptyGalleryDescription}
+      dictionary={props.dictionary}
+    />
   );
 }
 
-function TriageFlowSection(props: { content: CmsContent }) {
+function TriageFlowSection(props: { content: CmsContent; dictionary: UiDictionary }) {
   return (
     <section id="ai-chat">
       <div className="container">
         <div className="card longpage-flow-card">
           <div className="section-heading longpage-flow-heading">
-            <span className="eyebrow">AI 导诊</span>
-            <h2>先在线问诊，再进入 Telegram 和真人医生沟通</h2>
-            <p>首页在手机上最重要的不是塞更多入口，而是让来访用户一路往下翻时，随时知道下一步该怎么做。</p>
+            <span className="eyebrow">{props.dictionary.triageEyebrow}</span>
+            <h2>{props.dictionary.triageTitle}</h2>
+            <p>{props.dictionary.triageDescription}</p>
           </div>
           <div className="longpage-flow-grid">
             {[
               {
-                title: "描述症状或项目",
-                summary: "牙疼、缺牙、修复、美白、种植、价格咨询，都可以先问。",
+                title: props.dictionary.triageSteps[0],
+                summary: props.content.homePage.sections[0]?.type === "hero" ? props.content.homePage.sections[0].aiPanel.steps[0] : "",
               },
               {
-                title: "AI 先做初筛",
-                summary: "先判断是否紧急、是否高意向、是否应该尽快转真人。",
+                title: props.dictionary.triageSteps[1],
+                summary: props.content.homePage.sections[0]?.type === "hero" ? props.content.homePage.sections[0].aiPanel.steps[1] : "",
               },
               {
-                title: "继续发片子和资料",
-                summary: "高意向用户直接转 Telegram，继续发影像、问价格和预约。",
+                title: props.dictionary.triageSteps[2],
+                summary: props.content.homePage.sections[0]?.type === "hero" ? props.content.homePage.sections[0].aiPanel.steps[2] : "",
               },
             ].map((item, index) => (
               <article key={item.title} className="card longpage-flow-step">
@@ -282,10 +336,10 @@ function TriageFlowSection(props: { content: CmsContent }) {
               target="_blank"
               rel="noreferrer"
             >
-              现在去 Telegram
+              {props.dictionary.triagePrimaryCta}
             </a>
             <a className="button secondary" href="#services">
-              继续看项目和价格
+              {props.dictionary.triageSecondaryCta}
             </a>
           </div>
         </div>
@@ -294,7 +348,7 @@ function TriageFlowSection(props: { content: CmsContent }) {
   );
 }
 
-function ContactBand(props: { content: CmsContent }) {
+function ContactBand(props: { content: CmsContent; dictionary: UiDictionary }) {
   const telegramUrl = props.content.telegramConfig.contactUrl || props.content.siteSettings.primaryContact.telegramUrl;
 
   return (
@@ -302,33 +356,33 @@ function ContactBand(props: { content: CmsContent }) {
       <div className="container">
         <div className="card longpage-contact-card">
           <div className="longpage-contact-copy">
-            <span className="eyebrow">联系方式</span>
-            <h2>翻到最后，直接联系，不再让用户跳来跳去</h2>
-            <p>手机用户通常不会耐心点很多子页面。最后这一屏就是电话、地址、Telegram 和下一步动作，看到就能立刻转化。</p>
+            <span className="eyebrow">{props.dictionary.contactEyebrow}</span>
+            <h2>{props.dictionary.contactTitle}</h2>
+            <p>{props.dictionary.contactDescription}</p>
           </div>
           <div className="longpage-contact-grid">
             <article className="card longpage-contact-item">
-              <div className="entity-meta">电话</div>
+              <div className="entity-meta">{props.dictionary.phoneLabel}</div>
               <strong>{props.content.siteSettings.primaryContact.phone}</strong>
-              <p>适合直接联系、回拨和快速确认。</p>
+              <p>{props.dictionary.phoneNote}</p>
             </article>
             <article className="card longpage-contact-item">
-              <div className="entity-meta">地址</div>
+              <div className="entity-meta">{props.dictionary.addressLabel}</div>
               <strong>{props.content.siteSettings.primaryContact.address}</strong>
-              <p>适合继续讲路线、住宿和跨境到诊。</p>
+              <p>{props.dictionary.addressNote}</p>
             </article>
             <article className="card longpage-contact-item">
-              <div className="entity-meta">Telegram</div>
+              <div className="entity-meta">{props.dictionary.telegramLabel}</div>
               <strong>{props.content.siteSettings.primaryContact.telegramHandle}</strong>
-              <p>适合继续发片子、问价格、约时间。</p>
+              <p>{props.dictionary.telegramNote}</p>
             </article>
           </div>
           <div className="longpage-cta-row">
             <a className="button primary" href={telegramUrl} target="_blank" rel="noreferrer">
-              直接去 Telegram
+              {props.dictionary.contactPrimaryCta}
             </a>
             <a className="button secondary" href="#top">
-              返回顶部
+              {props.dictionary.contactSecondaryCta}
             </a>
           </div>
         </div>
@@ -337,16 +391,22 @@ function ContactBand(props: { content: CmsContent }) {
   );
 }
 
-function CustomPageView(props: { page?: LandingPage }) {
+function CustomPageView(props: { page?: LandingPage; dictionary: UiDictionary }) {
   if (!props.page) {
-    return <EmptyState title="页面不存在" description="没有找到这个自定义页面。" />;
+    return (
+      <EmptyState
+        title={props.dictionary.emptyPageTitle}
+        description={props.dictionary.emptyPageDescription}
+        dictionary={props.dictionary}
+      />
+    );
   }
 
   return (
     <section>
       <div className="container">
         <article className="card list-page">
-          <div className="eyebrow">自定义页面</div>
+          <div className="eyebrow">{props.dictionary.customPageEyebrow}</div>
           <h1>{props.page.title}</h1>
           <p>{props.page.summary}</p>
           <div className="prose-block">{props.page.content}</div>
@@ -359,8 +419,50 @@ function CustomPageView(props: { page?: LandingPage }) {
 export function App() {
   const pathname = usePathname();
   const [content, setContent] = useState<CmsContent>(cmsContentSeed);
+  const [language, setLanguage] = useState<Language>(DEFAULT_LANGUAGE);
   const [loading, setLoading] = useState(true);
   const [warning, setWarning] = useState("");
+  const dictionary = uiDictionary[language];
+  const contentWithFallbackI18n = useMemo(
+    () => (content.i18n ? content : { ...content, i18n: cmsContentSeed.i18n }),
+    [content],
+  );
+  const resolvedContent = useMemo(
+    () => resolveContentForLanguage(contentWithFallbackI18n, language),
+    [contentWithFallbackI18n, language],
+  );
+
+  const applyLanguage = (nextLanguage: Language, persist = true) => {
+    setLanguage(nextLanguage);
+    if (persist) {
+      writeStoredLanguage(nextLanguage);
+    }
+    updateUrlLanguage(nextLanguage);
+  };
+
+  useEffect(() => {
+    const urlLanguage = readUrlLanguage();
+    const storedLanguage = readStoredLanguage();
+    const browserLanguage = normalizeLanguage(window.navigator.language);
+
+    if (urlLanguage) {
+      applyLanguage(urlLanguage);
+      return;
+    }
+
+    if (storedLanguage) {
+      applyLanguage(storedLanguage, false);
+      return;
+    }
+
+    detectPreferredLanguage()
+      .then((result) => {
+        applyLanguage(result.preferredLanguage, false);
+      })
+      .catch(() => {
+        applyLanguage(browserLanguage ?? DEFAULT_LANGUAGE, false);
+      });
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -402,6 +504,27 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    document.documentElement.lang = language;
+    document.title = resolvedContent.homePage.seoTitle || resolvedContent.homePage.title;
+
+    const ensureMeta = (name: "description" | "og:locale", attr: "name" | "property") => {
+      let element = document.head.querySelector(`meta[${attr}="${name}"]`) as HTMLMetaElement | null;
+      if (!element) {
+        element = document.createElement("meta");
+        element.setAttribute(attr, name);
+        document.head.appendChild(element);
+      }
+      return element;
+    };
+
+    ensureMeta("description", "name").setAttribute("content", resolvedContent.homePage.seoDescription || "");
+    ensureMeta("og:locale", "property").setAttribute(
+      "content",
+      language === "ru" ? "ru_RU" : language === "en" ? "en_US" : "zh_CN",
+    );
+  }, [language, resolvedContent.homePage.seoDescription, resolvedContent.homePage.seoTitle, resolvedContent.homePage.title]);
+
   if (pathname === "/admin") {
     return <AdminPage content={content} onSaved={setContent} />;
   }
@@ -412,12 +535,12 @@ export function App() {
 
   if (loading && pathname !== "/admin" && pathname !== "/admin/album") {
     return (
-      <PageShell content={content}>
+      <PageShell content={resolvedContent} language={language} dictionary={dictionary} onLanguageChange={applyLanguage}>
         <section>
           <div className="container">
             <div className="card list-page">
-              <h1>加载中</h1>
-              <p>正在读取后台内容。</p>
+              <h1>{dictionary.loadingTitle}</h1>
+              <p>{dictionary.loadingDescription}</p>
             </div>
           </div>
         </section>
@@ -427,18 +550,18 @@ export function App() {
 
   // 所有内容都在首页单页滚动展示，不再跳转子页面
   return (
-    <PageShell content={content}>
-      {warning ? <RuntimeNotice message={warning} /> : null}
-      {content.homePage.sections.map((section) => (
+    <PageShell content={resolvedContent} language={language} dictionary={dictionary} onLanguageChange={applyLanguage}>
+      {warning ? <RuntimeNotice message={warning} dictionary={dictionary} /> : null}
+      {resolvedContent.homePage.sections.map((section) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
-      <TriageFlowSection content={content} />
-      <ServiceList items={content.services} anchorId="services" />
-      <DoctorList items={content.doctors} anchorId="doctors" />
-      <PricingList items={content.pricing} anchorId="pricing" />
-      <GalleryList items={content.gallery} anchorId="gallery" />
-      <ArticleList items={content.articles} anchorId="articles" />
-      <ContactBand content={content} />
+      <TriageFlowSection content={resolvedContent} dictionary={dictionary} />
+      <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} />
+      <DoctorList items={resolvedContent.doctors} anchorId="doctors" dictionary={dictionary} />
+      <PricingList items={resolvedContent.pricing} anchorId="pricing" dictionary={dictionary} />
+      <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} />
+      <ArticleList items={resolvedContent.articles} anchorId="articles" dictionary={dictionary} />
+      <ContactBand content={resolvedContent} dictionary={dictionary} />
     </PageShell>
   );
 }

@@ -1,10 +1,12 @@
 import type { SiteSettings } from "@quanyu/shared";
+import type { UiDictionary } from "../../src/lib/i18n";
 
 type FooterProps = {
   settings: SiteSettings;
+  dictionary: UiDictionary;
 };
 
-export function Footer({ settings }: FooterProps) {
+export function Footer({ settings, dictionary }: FooterProps) {
   const year = new Date().getFullYear();
 
   return (
@@ -21,13 +23,13 @@ export function Footer({ settings }: FooterProps) {
               target="_blank"
               rel="noopener noreferrer"
             >
-              💬 Telegram 咨询
+              💬 {dictionary.telegramCta}
             </a>
           </div>
 
           {/* Contact */}
           <div className="site-footer-col">
-            <h4>联系方式</h4>
+            <h4>{dictionary.footerContactTitle}</h4>
             <div>{settings.primaryContact.phone}</div>
             <div>{settings.primaryContact.address}</div>
             <div className="site-footer-link-wrap">
@@ -44,7 +46,7 @@ export function Footer({ settings }: FooterProps) {
 
           {/* Quick links */}
           <div className="site-footer-col">
-            <h4>快速导航</h4>
+            <h4>{dictionary.footerNavigationTitle}</h4>
             {settings.navigation.map((item) => (
               <div key={item.id}>
                 <a href={item.href} className="site-footer-link">
@@ -56,8 +58,8 @@ export function Footer({ settings }: FooterProps) {
         </div>
 
         <div className="site-footer-bottom">
-          <span>© {year} {settings.brandName}. 保留所有权利。</span>
-          <span>黑龙江省黑河市 · 跨境牙科咨询</span>
+          <span>© {year} {settings.brandName}. {dictionary.footerCopyright}</span>
+          <span>{dictionary.footerRegion}</span>
         </div>
       </div>
     </footer>

@@ -7,6 +7,7 @@ import { registerAdminRoutes } from "./modules/admin/routes";
 import { registerChatRoutes } from "./modules/chat/routes";
 import { registerContentRoutes } from "./modules/content/routes";
 import { registerHealthRoutes } from "./modules/health/routes";
+import { registerLocaleRoutes } from "./modules/locale/routes";
 import { registerTelegramRoutes } from "./modules/telegram/routes";
 import { getUploadsDir } from "./lib/content-store";
 import { ensureAllLocalStorage } from "./lib/storage/storage-paths";
@@ -48,6 +49,7 @@ async function bootstrap() {
   });
 
   await registerHealthRoutes(app);
+  await registerLocaleRoutes(app);
   await registerAdminRoutes(app);
   await registerContentRoutes(app);
   await registerAnalyticsRoutes(app);

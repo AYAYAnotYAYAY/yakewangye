@@ -1,4 +1,4 @@
-import type { ChatSession, CmsContent, MediaLibraryAsset, MediaLibraryState } from "@quanyu/shared";
+import type { ChatSession, CmsContent, Language, MediaLibraryAsset, MediaLibraryState } from "@quanyu/shared";
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 export const ADMIN_TOKEN_STORAGE_KEY = "quanyu_admin_token";
@@ -126,6 +126,21 @@ export async function fetchContent() {
   }
 
   return (await response.json()) as CmsContent;
+}
+
+export async function detectPreferredLanguage() {
+  const response = await fetchWithFallback(`/api/locale/detect?_=${Date.now()}`);
+
+  if (!response.ok) {
+    throw new Error("Failed to detect language");
+  }
+
+  return (await response.json()) as {
+    ok: true;
+    preferredLanguage: Language;
+    country: string | null;
+    source: "country_header" | "accept_language";
+  };
 }
 
 function createAdminHeaders(token: string, extra?: HeadersInit) {

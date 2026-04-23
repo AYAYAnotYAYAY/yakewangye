@@ -1,8 +1,12 @@
-import { useMemo, useState } from "react";
+import type { Language } from "@quanyu/shared";
+import { useEffect, useMemo, useState } from "react";
 import { sendChatMessage } from "../lib/api";
+import type { UiDictionary } from "../lib/i18n";
 
 type ChatWidgetProps = {
   telegramUrl: string;
+  language: Language;
+  dictionary: UiDictionary;
 };
 
 type LocalMessage = {
@@ -22,14 +26,14 @@ function getStableId(key: string) {
   return created;
 }
 
-export function ChatWidget({ telegramUrl }: ChatWidgetProps) {
+export function ChatWidget({ telegramUrl, language, dictionary }: ChatWidgetProps) {
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [messages, setMessages] = useState<LocalMessage[]>([
     {
       role: "assistant",
-      content: "你好，我是泉寓门诊的 AI 导诊助手。你可以先告诉我你的症状、持续多久了、是否疼痛或出血。",
+      content: dictionary.chatWelcome,
     },
   ]);
   const [triageText, setTriageText] = useState("");
@@ -41,6 +45,12 @@ export function ChatWidget({ telegramUrl }: ChatWidgetProps) {
     }),
     [],
   );
+
+  useEffect(() => {
+    setMessages([{ role: "assistant", content: dictionary.chatWelcome }]);
+    setTriageText("");
+    setInput("");
+  }, [dictionary.chatWelcome, language]);
 
   const submit = async () => {
     const message = input.trim();
@@ -57,18 +67,18 @@ export function ChatWidget({ telegramUrl }: ChatWidgetProps) {
       const result = await sendChatMessage({
         sessionId: ids.sessionId,
         visitorId: ids.visitorId,
-        language: "zh",
+        language,
         message,
       });
 
       setMessages((current) => [...current, { role: "assistant", content: result.assistantMessage.content }]);
       setTriageText(
-        `${result.triage.urgent ? "当前判断：较高紧急度。" : "当前判断：可继续初步问诊。"} ${result.triage.suggestedNextStep}`,
+        `${result.triage.urgent ? dictionary.chatUrgent : dictionary.chatContinue} ${result.triage.suggestedNextStep}`,
       );
     } catch (error) {
       setMessages((current) => [
         ...current,
-        { role: "assistant", content: `发送失败：${String(error)}` },
+        { role: "assistant", content: `${dictionary.chatErrorPrefix}${String(error)}` },
       ]);
     } finally {
       setSending(false);
@@ -81,11 +91,11 @@ export function ChatWidget({ telegramUrl }: ChatWidgetProps) {
         <div className="chat-panel card">
           <div className="chat-head">
             <div>
-              <strong>AI 问诊助手</strong>
-              <div className="chat-subtitle">后台可配置模型、API 地址和提示词</div>
+              <strong>{dictionary.chatTitle}</strong>
+              <div className="chat-subtitle">{dictionary.chatSubtitle}</div>
             </div>
             <button className="button secondary" type="button" onClick={() => setOpen(false)}>
-              收起
+              {dictionary.chatCollapse}
             </button>
           </div>
           <div className="chat-messages">
@@ -98,23 +108,23 @@ export function ChatWidget({ telegramUrl }: ChatWidgetProps) {
           {triageText ? <div className="chat-triage">{triageText}</div> : null}
           <div className="chat-actions">
             <textarea
-              placeholder="例如：右下牙疼两天了，晚上更疼，还没拍片"
+              placeholder={dictionary.chatPlaceholder}
               value={input}
               onChange={(event) => setInput(event.target.value)}
             />
             <div className="chat-buttons">
               <a className="button secondary" href={telegramUrl} target="_blank" rel="noreferrer">
-                去 Telegram
+                {dictionary.chatTelegram}
               </a>
               <button className="button primary" type="button" onClick={submit} disabled={sending}>
-                {sending ? "发送中..." : "发送"}
+                {sending ? dictionary.chatSending : dictionary.chatSend}
               </button>
             </div>
           </div>
         </div>
       ) : (
         <button className="chat-open button primary" type="button" onClick={() => setOpen(true)}>
-          AI 问诊
+          {dictionary.chatOpen}
         </button>
       )}
     </div>

@@ -4,6 +4,7 @@ import type {
   CmsContent,
   Doctor,
   GalleryAsset,
+  Language,
   LandingPage,
   MediaLibraryState,
   PricingItem,
@@ -25,8 +26,9 @@ import {
   setupAdmin,
 } from "../lib/api";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { MediaField, MediaLibraryManager } from "../components/admin-media";
+import { DEFAULT_LANGUAGE, resolveContentForLanguage, SUPPORTED_LANGUAGES, updateLocalizedContentDraft } from "../lib/i18n";
 
 type AdminPageProps = {
   content: CmsContent;
@@ -43,6 +45,13 @@ type AiCopyPackage = {
   format: "quanyu.ai-copy-package";
   version: number;
   contentSnapshot: CmsContent;
+};
+
+type PendingAiImport = {
+  incoming: CmsContent;
+  localizedIncoming: CmsContent;
+  language: Language;
+  diffs: AiDiffEntry[];
 };
 
 type AiDiffEntry = {
@@ -77,6 +86,12 @@ const ADMIN_TABS: Array<[TabKey, string]> = [
   ["pages", "自定义页"],
 ];
 
+const ADMIN_LANGUAGE_LABELS: Record<Language, string> = {
+  zh: "中文",
+  ru: "俄语",
+  en: "英语",
+};
+
 function getAdminTabLabel(activeTab: TabKey) {
   return ADMIN_TABS.find(([key]) => key === activeTab)?.[1] ?? "模块";
 }
@@ -100,8 +115,10 @@ function buildExternalAiInstructions(content: CmsContent) {
     "你的任务：",
     "1. 先浏览同类牙科诊所、口腔门诊、跨境医疗咨询网站，研究他们的首页介绍、服务介绍、医生介绍、价格说明、信任表达和行动号召写法。",
     "2. 再根据我提供的 JSON 内容，对本站文案进行重写，让它更专业、更可信、更像真实医疗服务网站，并且更适合咨询转化。",
-    "3. 输出时保留原 JSON 结构，返回完整 JSON，只修改适合改写的文字内容。",
-    "4. 注意：系统导回时只接受白名单内的文案字段，电话、地址、链接、配置、素材等字段即使被改也会被忽略。",
+    "3. 本站采用三语结构：中文是主基底语言，俄语和英语写在 contentSnapshot.i18n.ru / contentSnapshot.i18n.en 覆盖层。",
+    "4. 输出时保留原 JSON 结构，返回完整 JSON，只修改适合改写的文字内容。",
+    "5. 中文文案写回 contentSnapshot 主结构；俄语、英语文案分别写回 contentSnapshot.i18n.ru / contentSnapshot.i18n.en 中对应字段。",
+    "6. 注意：系统导回时只接受白名单内的文案字段，电话、地址、链接、配置、素材等字段即使被改也会被忽略。",
     "",
     "重点优化方向：",
     "- 首页标题、副标题、卖点、行动按钮文案",
@@ -126,6 +143,9 @@ function buildExternalAiInstructions(content: CmsContent) {
     "输出要求：",
     "- 返回完整 JSON",
     "- 保持字段名和层级完全一致",
+    "- 中文主内容放在 contentSnapshot 主结构里",
+    "- 俄语放在 contentSnapshot.i18n.ru",
+    "- 英语放在 contentSnapshot.i18n.en",
     "- 只改适合改写的文案字段",
     "- 文案要与牙科门诊网站场景匹配，不能写成别的行业",
   ].join("\n");
@@ -561,6 +581,17 @@ function applySelectedAiDiffs(current: CmsContent, incoming: CmsContent, selecte
   return nextContent;
 }
 
+function applySelectedAiDiffsForLanguage(
+  current: CmsContent,
+  incoming: CmsContent,
+  language: Language,
+  selectedIds: Set<string>,
+) {
+  return updateLocalizedContentDraft(current, language, (localizedCurrent) =>
+    applySelectedAiDiffs(localizedCurrent, incoming, selectedIds),
+  );
+}
+
 function isAiCopyPackage(value: unknown): value is AiCopyPackage {
   return Boolean(
     value &&
@@ -730,6 +761,7 @@ function EntityListEditor<T extends { id: string }>(props: {
 function AdminConsole({ content, onSaved, adminToken, username, onLogout }: AdminConsoleProps) {
   const [draft, setDraft] = useState<CmsContent>(content);
   const [activeTab, setActiveTab] = useState<TabKey>("site");
+  const [editingLanguage, setEditingLanguage] = useState<Language>(DEFAULT_LANGUAGE);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
@@ -737,7 +769,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [restoring, setRestoring] = useState(false);
   const [restoringAiCopy, setRestoringAiCopy] = useState(false);
   const [copyingInstructions, setCopyingInstructions] = useState(false);
-  const [pendingAiImport, setPendingAiImport] = useState<{ incoming: CmsContent; diffs: AiDiffEntry[] } | null>(null);
+  const [pendingAiImport, setPendingAiImport] = useState<PendingAiImport | null>(null);
   const [selectedAiDiffIds, setSelectedAiDiffIds] = useState<string[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [mediaLibrary, setMediaLibrary] = useState<MediaLibraryState>({
@@ -747,6 +779,28 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
   const aiCopyFileInputRef = useRef<HTMLInputElement | null>(null);
   const externalAiInstructions = buildExternalAiInstructions(draft);
+  const localizedDraft = useMemo(() => resolveContentForLanguage(draft, editingLanguage), [draft, editingLanguage]);
+  const isLocalizedEditing = editingLanguage !== DEFAULT_LANGUAGE;
+  const dirtyLanguages = useMemo(() => {
+    const result: Record<Language, boolean> = {
+      zh: false,
+      ru: false,
+      en: false,
+    };
+
+    for (const language of SUPPORTED_LANGUAGES) {
+      result[language] =
+        JSON.stringify(resolveContentForLanguage(draft, language)) !==
+        JSON.stringify(resolveContentForLanguage(content, language));
+    }
+
+    return result;
+  }, [content, draft]);
+  const dirtyLanguageCount = SUPPORTED_LANGUAGES.filter((language) => dirtyLanguages[language]).length;
+
+  const updateDraft = (mutator: (current: CmsContent) => CmsContent) => {
+    setDraft((current) => updateLocalizedContentDraft(current, editingLanguage, mutator));
+  };
 
   useEffect(() => {
     setDraft(content);
@@ -770,6 +824,13 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   useEffect(() => {
     setMobileNavOpen(false);
   }, [activeTab]);
+
+  useEffect(() => {
+    if (pendingAiImport && pendingAiImport.language !== editingLanguage) {
+      setPendingAiImport(null);
+      setSelectedAiDiffIds([]);
+    }
+  }, [editingLanguage, pendingAiImport]);
 
   const save = async () => {
     setSaving(true);
@@ -889,15 +950,18 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
         throw new Error("invalid_ai_copy_file");
       }
 
-      const diffs = collectAiCopyDiffs(draft, raw.contentSnapshot);
+      const localizedIncoming = resolveContentForLanguage(raw.contentSnapshot, editingLanguage);
+      const diffs = collectAiCopyDiffs(localizedDraft, localizedIncoming);
       setPendingAiImport({
+        language: editingLanguage,
         incoming: raw.contentSnapshot,
+        localizedIncoming,
         diffs,
       });
       setSelectedAiDiffIds(diffs.map((item) => item.id));
 
       if (!diffs.length) {
-        window.alert("这个 AI 文案包和当前内容没有可应用的文案差异。");
+        window.alert(`这个 AI 文案包和当前 ${ADMIN_LANGUAGE_LABELS[editingLanguage]} 视图没有可应用的文案差异。`);
       }
     } catch (error) {
       window.alert(`AI 文案包恢复失败: ${String(error)}`);
@@ -921,7 +985,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     setSaving(true);
 
     try {
-      const merged = applySelectedAiDiffs(draft, pendingAiImport.incoming, selectedIds);
+      const merged = applySelectedAiDiffsForLanguage(draft, pendingAiImport.localizedIncoming, pendingAiImport.language, selectedIds);
       const response = await saveContent(merged, adminToken);
       setDraft(response.content);
       onSaved(response.content);
@@ -960,6 +1024,28 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           <h1>内容后台</h1>
           <p>支持本地上传、素材库复用、内容编辑和独立数据存储，保存后前台会直接读取新内容。</p>
           <div className="entity-note">当前管理员：{username}</div>
+          <div className="admin-language-toolbar">
+            <div className="entity-note">
+              当前编辑语言：{ADMIN_LANGUAGE_LABELS[editingLanguage]}
+              {isLocalizedEditing ? "，保存后会写入对应语言覆盖层" : "，这是主基底语言"}
+            </div>
+            <div className="admin-language-switcher">
+              {SUPPORTED_LANGUAGES.map((language) => (
+                <button
+                  key={language}
+                  className={`site-language-chip${editingLanguage === language ? " active" : ""}${dirtyLanguages[language] ? " dirty" : ""}`}
+                  onClick={() => setEditingLanguage(language)}
+                  type="button"
+                >
+                  {language.toUpperCase()}
+                  {dirtyLanguages[language] ? " *" : ""}
+                </button>
+              ))}
+            </div>
+            <div className="entity-note">
+              {dirtyLanguageCount ? `未保存语言：${SUPPORTED_LANGUAGES.filter((language) => dirtyLanguages[language]).map((language) => ADMIN_LANGUAGE_LABELS[language]).join(" / ")}` : "当前三种语言都已保存"}
+            </div>
+          </div>
         </div>
         <div className="admin-header-actions">
           <a className="button secondary" href="/">
@@ -1001,7 +1087,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             退出登录
           </button>
           <button className="button primary" onClick={save} type="button" disabled={saving}>
-            {saving ? "保存中..." : "保存全部内容"}
+            {saving ? "保存中..." : dirtyLanguageCount ? `保存全部内容（${dirtyLanguageCount} 种语言有改动）` : "保存全部内容"}
           </button>
         </div>
         <input ref={aiCopyFileInputRef} type="file" accept="application/json,.json" hidden onChange={handleAiCopyRestoreFile} />
@@ -1073,7 +1159,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 </div>
               </div>
               <div className="entity-note">
-                这里展示的是 AI 文案包和当前后台内容之间的白名单差异。你可以逐项勾选，只导入你认可的文案。
+                这里展示的是 AI 文案包和当前 {ADMIN_LANGUAGE_LABELS[pendingAiImport.language]} 编辑视图之间的白名单差异。你可以逐项勾选，只导入你认可的文案。
               </div>
               <div className="admin-ai-diff-list">
                 {pendingAiImport.diffs.map((item) => {
@@ -1142,9 +1228,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 />
                 <TextField
                   label="顶部提示"
-                  value={draft.siteSettings.topbarNotice}
+                  value={localizedDraft.siteSettings.topbarNotice}
                   onChange={(value) =>
-                    setDraft((current) => ({
+                    updateDraft((current) => ({
                       ...current,
                       siteSettings: { ...current.siteSettings, topbarNotice: value },
                     }))
@@ -1152,10 +1238,10 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 />
                 <TextField
                   label="页脚说明"
-                  value={draft.siteSettings.footerDescription}
+                  value={localizedDraft.siteSettings.footerDescription}
                   multiline
                   onChange={(value) =>
-                    setDraft((current) => ({
+                    updateDraft((current) => ({
                       ...current,
                       siteSettings: { ...current.siteSettings, footerDescription: value },
                     }))
@@ -1214,6 +1300,29 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                     }))
                   }
                 />
+              </div>
+              <div className="admin-subsection">
+                <h3>导航文案</h3>
+                <div className="admin-grid">
+                  {localizedDraft.siteSettings.navigation.map((item, index) => (
+                    <TextField
+                      key={item.id}
+                      label={`导航 ${item.id}`}
+                      value={item.label}
+                      onChange={(value) =>
+                        updateDraft((current) => ({
+                          ...current,
+                          siteSettings: {
+                            ...current.siteSettings,
+                            navigation: current.siteSettings.navigation.map((entry, entryIndex) =>
+                              entryIndex === index ? { ...entry, label: value } : entry,
+                            ),
+                          },
+                        }))
+                      }
+                    />
+                  ))}
+                </div>
               </div>
             </div>
           ) : null}
@@ -1425,75 +1534,710 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
 
           {activeTab === "home" ? (
             <div className="card admin-panel">
-              <h2>首页 Hero 与 SEO</h2>
-              {draft.homePage.sections[0]?.type === "hero" ? (
-                <div className="admin-grid">
-                  <TextField
-                    label="首页主标题"
-                    value={draft.homePage.sections[0].title}
-                    multiline
-                    onChange={(value) =>
-                      setDraft((current) => {
-                        const first = current.homePage.sections[0];
-                        if (!first || first.type !== "hero") return current;
-                        return {
-                          ...current,
-                          homePage: {
-                            ...current.homePage,
-                            sections: [{ ...first, title: value }, ...current.homePage.sections.slice(1)],
-                          },
-                        };
-                      })
-                    }
-                  />
-                  <TextField
-                    label="首页说明"
-                    value={draft.homePage.sections[0].description}
-                    multiline
-                    onChange={(value) =>
-                      setDraft((current) => {
-                        const first = current.homePage.sections[0];
-                        if (!first || first.type !== "hero") return current;
-                        return {
-                          ...current,
-                          homePage: {
-                            ...current.homePage,
-                            sections: [{ ...first, description: value }, ...current.homePage.sections.slice(1)],
-                          },
-                        };
-                      })
-                    }
-                  />
-                  <TextField
-                    label="SEO Title"
-                    value={draft.homePage.seoTitle}
-                    onChange={(value) =>
-                      setDraft((current) => ({
-                        ...current,
-                        homePage: { ...current.homePage, seoTitle: value },
-                      }))
-                    }
-                  />
-                  <TextField
-                    label="SEO Description"
-                    value={draft.homePage.seoDescription}
-                    multiline
-                    onChange={(value) =>
-                      setDraft((current) => ({
-                        ...current,
-                        homePage: { ...current.homePage, seoDescription: value },
-                      }))
-                    }
-                  />
+              <h2>首页文案与 SEO</h2>
+              <div className="admin-grid">
+                <TextField
+                  label="页面标题"
+                  value={localizedDraft.homePage.title}
+                  onChange={(value) =>
+                    updateDraft((current) => ({
+                      ...current,
+                      homePage: { ...current.homePage, title: value },
+                    }))
+                  }
+                />
+                <TextField
+                  label="SEO Title"
+                  value={localizedDraft.homePage.seoTitle}
+                  onChange={(value) =>
+                    updateDraft((current) => ({
+                      ...current,
+                      homePage: { ...current.homePage, seoTitle: value },
+                    }))
+                  }
+                />
+                <TextField
+                  label="SEO Description"
+                  value={localizedDraft.homePage.seoDescription}
+                  multiline
+                  onChange={(value) =>
+                    updateDraft((current) => ({
+                      ...current,
+                      homePage: { ...current.homePage, seoDescription: value },
+                    }))
+                  }
+                />
+              </div>
+
+              <div className="admin-subsection">
+                <h3>首页模块文案</h3>
+                <div className="admin-entity-list">
+                  {localizedDraft.homePage.sections.map((section, sectionIndex) => (
+                    <article key={section.id} className="card admin-entity-card">
+                      <div className="admin-entity-head">
+                        <div className="admin-entity-title">
+                          <strong>{section.id}</strong>
+                          <span className="entity-note">{section.type}</span>
+                        </div>
+                      </div>
+
+                      <div className="admin-grid">
+                        <TextField
+                          label="眉题"
+                          value={section.eyebrow}
+                          onChange={(value) =>
+                            updateDraft((current) => ({
+                              ...current,
+                              homePage: {
+                                ...current.homePage,
+                                sections: current.homePage.sections.map((item, index) =>
+                                  index === sectionIndex ? { ...item, eyebrow: value } : item,
+                                ),
+                              },
+                            }))
+                          }
+                        />
+                        <TextField
+                          label="标题"
+                          value={section.title}
+                          multiline
+                          onChange={(value) =>
+                            updateDraft((current) => ({
+                              ...current,
+                              homePage: {
+                                ...current.homePage,
+                                sections: current.homePage.sections.map((item, index) =>
+                                  index === sectionIndex ? { ...item, title: value } : item,
+                                ),
+                              },
+                            }))
+                          }
+                        />
+                        <TextField
+                          label="描述"
+                          value={section.description}
+                          multiline
+                          onChange={(value) =>
+                            updateDraft((current) => ({
+                              ...current,
+                              homePage: {
+                                ...current.homePage,
+                                sections: current.homePage.sections.map((item, index) =>
+                                  index === sectionIndex ? { ...item, description: value } : item,
+                                ),
+                              },
+                            }))
+                          }
+                        />
+
+                        {section.type === "hero"
+                          ? (
+                              <>
+                                {section.actions.map((action, actionIndex) => (
+                                  <TextField
+                                    key={`${section.id}-action-${actionIndex}`}
+                                    label={`按钮 ${actionIndex + 1}`}
+                                    value={action.label}
+                                    onChange={(value) =>
+                                      updateDraft((current) => {
+                                        const currentSection = current.homePage.sections[sectionIndex];
+                                        if (!currentSection || currentSection.type !== "hero") return current;
+                                        return {
+                                          ...current,
+                                          homePage: {
+                                            ...current.homePage,
+                                            sections: current.homePage.sections.map((item, index) =>
+                                              index === sectionIndex && item.type === "hero"
+                                                ? {
+                                                    ...item,
+                                                    actions: item.actions.map((entry, entryIndex) =>
+                                                      entryIndex === actionIndex ? { ...entry, label: value } : entry,
+                                                    ),
+                                                  }
+                                                : item,
+                                            ),
+                                          },
+                                        };
+                                      })
+                                    }
+                                  />
+                                ))}
+                                {section.highlights.map((item, itemIndex) => (
+                                  <Fragment key={`${section.id}-highlight-${itemIndex}`}>
+                                    <TextField
+                                      label={`高亮 ${itemIndex + 1} 标题`}
+                                      value={item.label}
+                                      onChange={(value) =>
+                                        updateDraft((current) => {
+                                          const currentSection = current.homePage.sections[sectionIndex];
+                                          if (!currentSection || currentSection.type !== "hero") return current;
+                                          return {
+                                            ...current,
+                                            homePage: {
+                                              ...current.homePage,
+                                              sections: current.homePage.sections.map((entry, index) =>
+                                                index === sectionIndex && entry.type === "hero"
+                                                  ? {
+                                                      ...entry,
+                                                      highlights: entry.highlights.map((highlight, highlightIndex) =>
+                                                        highlightIndex === itemIndex ? { ...highlight, label: value } : highlight,
+                                                      ),
+                                                    }
+                                                  : entry,
+                                              ),
+                                            },
+                                          };
+                                        })
+                                      }
+                                    />
+                                    <TextField
+                                      label={`高亮 ${itemIndex + 1} 内容`}
+                                      value={item.value}
+                                      onChange={(value) =>
+                                        updateDraft((current) => {
+                                          const currentSection = current.homePage.sections[sectionIndex];
+                                          if (!currentSection || currentSection.type !== "hero") return current;
+                                          return {
+                                            ...current,
+                                            homePage: {
+                                              ...current.homePage,
+                                              sections: current.homePage.sections.map((entry, index) =>
+                                                index === sectionIndex && entry.type === "hero"
+                                                  ? {
+                                                      ...entry,
+                                                      highlights: entry.highlights.map((highlight, highlightIndex) =>
+                                                        highlightIndex === itemIndex ? { ...highlight, value } : highlight,
+                                                      ),
+                                                    }
+                                                  : entry,
+                                              ),
+                                            },
+                                          };
+                                        })
+                                      }
+                                    />
+                                  </Fragment>
+                                ))}
+                                <TextField
+                                  label="AI 面板标题"
+                                  value={section.aiPanel.title}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "hero") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "hero"
+                                              ? { ...entry, aiPanel: { ...entry.aiPanel, title: value } }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label="AI 面板描述"
+                                  value={section.aiPanel.description}
+                                  multiline
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "hero") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "hero"
+                                              ? { ...entry, aiPanel: { ...entry.aiPanel, description: value } }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                {section.aiPanel.steps.map((step, stepIndex) => (
+                                  <TextField
+                                    key={`${section.id}-ai-step-${stepIndex}`}
+                                    label={`AI 步骤 ${stepIndex + 1}`}
+                                    value={step}
+                                    onChange={(value) =>
+                                      updateDraft((current) => {
+                                        const currentSection = current.homePage.sections[sectionIndex];
+                                        if (!currentSection || currentSection.type !== "hero") return current;
+                                        return {
+                                          ...current,
+                                          homePage: {
+                                            ...current.homePage,
+                                            sections: current.homePage.sections.map((entry, index) =>
+                                              index === sectionIndex && entry.type === "hero"
+                                                ? {
+                                                    ...entry,
+                                                    aiPanel: {
+                                                      ...entry.aiPanel,
+                                                      steps: entry.aiPanel.steps.map((item, itemIndex) =>
+                                                        itemIndex === stepIndex ? value : item,
+                                                      ),
+                                                    },
+                                                  }
+                                                : entry,
+                                            ),
+                                          },
+                                        };
+                                      })
+                                    }
+                                  />
+                                ))}
+                              </>
+                            )
+                          : null}
+
+                        {section.type === "services"
+                          ? section.items.map((item, itemIndex) => (
+                              <Fragment key={`${section.id}-item-${itemIndex}`}>
+                                <TextField
+                                  label={`项目 ${itemIndex + 1} 标签`}
+                                  value={item.tag}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "services") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "services"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((serviceItem, serviceIndex) =>
+                                                    serviceIndex === itemIndex ? { ...serviceItem, tag: value } : serviceItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`项目 ${itemIndex + 1} 标题`}
+                                  value={item.title}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "services") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "services"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((serviceItem, serviceIndex) =>
+                                                    serviceIndex === itemIndex ? { ...serviceItem, title: value } : serviceItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`项目 ${itemIndex + 1} 摘要`}
+                                  value={item.summary}
+                                  multiline
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "services") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "services"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((serviceItem, serviceIndex) =>
+                                                    serviceIndex === itemIndex ? { ...serviceItem, summary: value } : serviceItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`项目 ${itemIndex + 1} 按钮`}
+                                  value={item.ctaLabel}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "services") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "services"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((serviceItem, serviceIndex) =>
+                                                    serviceIndex === itemIndex ? { ...serviceItem, ctaLabel: value } : serviceItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                              </Fragment>
+                            ))
+                          : null}
+
+                        {section.type === "journey"
+                          ? section.steps.map((step, stepIndex) => (
+                              <Fragment key={`${section.id}-step-${stepIndex}`}>
+                                <TextField
+                                  label={`流程 ${stepIndex + 1} 标题`}
+                                  value={step.title}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "journey") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "journey"
+                                              ? {
+                                                  ...entry,
+                                                  steps: entry.steps.map((journeyStep, journeyIndex) =>
+                                                    journeyIndex === stepIndex ? { ...journeyStep, title: value } : journeyStep,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`流程 ${stepIndex + 1} 摘要`}
+                                  value={step.summary}
+                                  multiline
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "journey") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "journey"
+                                              ? {
+                                                  ...entry,
+                                                  steps: entry.steps.map((journeyStep, journeyIndex) =>
+                                                    journeyIndex === stepIndex ? { ...journeyStep, summary: value } : journeyStep,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                              </Fragment>
+                            ))
+                          : null}
+
+                        {section.type === "gallery"
+                          ? section.items.map((item, itemIndex) => (
+                              <Fragment key={`${section.id}-gallery-${itemIndex}`}>
+                                <TextField
+                                  label={`图册 ${itemIndex + 1} 标题`}
+                                  value={item.title}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "gallery") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "gallery"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((galleryItem, galleryIndex) =>
+                                                    galleryIndex === itemIndex ? { ...galleryItem, title: value } : galleryItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`图册 ${itemIndex + 1} 摘要`}
+                                  value={item.summary}
+                                  multiline
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "gallery") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "gallery"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((galleryItem, galleryIndex) =>
+                                                    galleryIndex === itemIndex ? { ...galleryItem, summary: value } : galleryItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                              </Fragment>
+                            ))
+                          : null}
+
+                        {section.type === "articles"
+                          ? section.items.map((item, itemIndex) => (
+                              <Fragment key={`${section.id}-article-${itemIndex}`}>
+                                <TextField
+                                  label={`文章 ${itemIndex + 1} 分类`}
+                                  value={item.category}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "articles") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "articles"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((articleItem, articleIndex) =>
+                                                    articleIndex === itemIndex ? { ...articleItem, category: value } : articleItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`文章 ${itemIndex + 1} 标题`}
+                                  value={item.title}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "articles") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "articles"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((articleItem, articleIndex) =>
+                                                    articleIndex === itemIndex ? { ...articleItem, title: value } : articleItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`文章 ${itemIndex + 1} 摘要`}
+                                  value={item.excerpt}
+                                  multiline
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "articles") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "articles"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((articleItem, articleIndex) =>
+                                                    articleIndex === itemIndex ? { ...articleItem, excerpt: value } : articleItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`文章 ${itemIndex + 1} SEO 标题`}
+                                  value={item.seoTitle}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "articles") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "articles"
+                                              ? {
+                                                  ...entry,
+                                                  items: entry.items.map((articleItem, articleIndex) =>
+                                                    articleIndex === itemIndex ? { ...articleItem, seoTitle: value } : articleItem,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                              </Fragment>
+                            ))
+                          : null}
+
+                        {section.type === "analytics"
+                          ? section.metrics.map((item, itemIndex) => (
+                              <Fragment key={`${section.id}-metric-${itemIndex}`}>
+                                <TextField
+                                  label={`指标 ${itemIndex + 1} 标题`}
+                                  value={item.label}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "analytics") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "analytics"
+                                              ? {
+                                                  ...entry,
+                                                  metrics: entry.metrics.map((metric, metricIndex) =>
+                                                    metricIndex === itemIndex ? { ...metric, label: value } : metric,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`指标 ${itemIndex + 1} 内容`}
+                                  value={item.value}
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "analytics") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "analytics"
+                                              ? {
+                                                  ...entry,
+                                                  metrics: entry.metrics.map((metric, metricIndex) =>
+                                                    metricIndex === itemIndex ? { ...metric, value } : metric,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                                <TextField
+                                  label={`指标 ${itemIndex + 1} 备注`}
+                                  value={item.note}
+                                  multiline
+                                  onChange={(value) =>
+                                    updateDraft((current) => {
+                                      const currentSection = current.homePage.sections[sectionIndex];
+                                      if (!currentSection || currentSection.type !== "analytics") return current;
+                                      return {
+                                        ...current,
+                                        homePage: {
+                                          ...current.homePage,
+                                          sections: current.homePage.sections.map((entry, index) =>
+                                            index === sectionIndex && entry.type === "analytics"
+                                              ? {
+                                                  ...entry,
+                                                  metrics: entry.metrics.map((metric, metricIndex) =>
+                                                    metricIndex === itemIndex ? { ...metric, note: value } : metric,
+                                                  ),
+                                                }
+                                              : entry,
+                                          ),
+                                        },
+                                      };
+                                    })
+                                  }
+                                />
+                              </Fragment>
+                            ))
+                          : null}
+                      </div>
+                    </article>
+                  ))}
                 </div>
-              ) : null}
+              </div>
             </div>
           ) : null}
 
           {activeTab === "articles" ? (
             <EntityListEditor
               title="文章"
-              items={draft.articles}
+              items={localizedDraft.articles}
               getSummary={(item) => item.title || item.slug || "未命名文章"}
               onAdd={() =>
                 setDraft((current) => ({
@@ -1522,7 +2266,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 }))
               }
               onUpdate={(id, next) =>
-                setDraft((current) => ({
+                updateDraft((current) => ({
                   ...current,
                   articles: current.articles.map((item) => (item.id === id ? next : item)),
                 }))
@@ -1553,7 +2297,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           {activeTab === "doctors" ? (
             <EntityListEditor
               title="医生"
-              items={draft.doctors}
+              items={localizedDraft.doctors}
               getSummary={(item) => item.name || "未命名医生"}
               onAdd={() =>
                 setDraft((current) => ({
@@ -1579,7 +2323,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 }))
               }
               onUpdate={(id, next) =>
-                setDraft((current) => ({
+                updateDraft((current) => ({
                   ...current,
                   doctors: current.doctors.map((item) => (item.id === id ? next : item)),
                 }))
@@ -1607,7 +2351,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           {activeTab === "services" ? (
             <EntityListEditor
               title="服务"
-              items={draft.services}
+              items={localizedDraft.services}
               getSummary={(item) => item.name || "未命名服务"}
               onAdd={() =>
                 setDraft((current) => ({
@@ -1632,7 +2376,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 }))
               }
               onUpdate={(id, next) =>
-                setDraft((current) => ({
+                updateDraft((current) => ({
                   ...current,
                   services: current.services.map((item) => (item.id === id ? next : item)),
                 }))
@@ -1659,7 +2403,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           {activeTab === "pricing" ? (
             <EntityListEditor
               title="价格"
-              items={draft.pricing}
+              items={localizedDraft.pricing}
               getSummary={(item) => item.name || "未命名价格项"}
               onAdd={() =>
                 setDraft((current) => ({
@@ -1683,7 +2427,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 }))
               }
               onUpdate={(id, next) =>
-                setDraft((current) => ({
+                updateDraft((current) => ({
                   ...current,
                   pricing: current.pricing.map((item) => (item.id === id ? next : item)),
                 }))
@@ -1702,7 +2446,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           {activeTab === "gallery" ? (
             <EntityListEditor
               title="图册视频"
-              items={draft.gallery}
+              items={localizedDraft.gallery}
               getSummary={(item) => item.title || "未命名媒体"}
               onAdd={() =>
                 setDraft((current) => ({
@@ -1726,7 +2470,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 }))
               }
               onUpdate={(id, next) =>
-                setDraft((current) => ({
+                updateDraft((current) => ({
                   ...current,
                   gallery: current.gallery.map((item) => (item.id === id ? next : item)),
                 }))
@@ -1764,7 +2508,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           {activeTab === "pages" ? (
             <EntityListEditor
               title="自定义页面"
-              items={draft.pages}
+              items={localizedDraft.pages}
               getSummary={(item) => item.title || item.slug || "未命名页面"}
               onAdd={() =>
                 setDraft((current) => ({
@@ -1790,7 +2534,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 }))
               }
               onUpdate={(id, next) =>
-                setDraft((current) => ({
+                updateDraft((current) => ({
                   ...current,
                   pages: current.pages.map((item) => (item.id === id ? next : item)),
                 }))
