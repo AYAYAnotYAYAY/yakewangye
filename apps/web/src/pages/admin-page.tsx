@@ -20,6 +20,7 @@ import {
   fetchAdminStatus,
   fetchChatSessions,
   fetchMediaLibrary,
+  generateAiSiteDraft,
   loginAdmin,
   restoreAdminBackup,
   saveContent,
@@ -769,6 +770,10 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [restoring, setRestoring] = useState(false);
   const [restoringAiCopy, setRestoringAiCopy] = useState(false);
   const [copyingInstructions, setCopyingInstructions] = useState(false);
+  const [generatingAiSiteDraft, setGeneratingAiSiteDraft] = useState(false);
+  const [aiSiteInstruction, setAiSiteInstruction] = useState(
+    "根据当前素材库，优化首页首屏、服务卡片、流程说明和图册文案，让网站更像真实牙科门诊官网，并更适合俄罗斯/中国患者咨询转化。",
+  );
   const [pendingAiImport, setPendingAiImport] = useState<PendingAiImport | null>(null);
   const [selectedAiDiffIds, setSelectedAiDiffIds] = useState<string[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -1016,6 +1021,47 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     }
   };
 
+  const handleGenerateAiSiteDraft = async () => {
+    const instruction = aiSiteInstruction.trim();
+
+    if (!instruction) {
+      window.alert("请先输入你希望 AI 怎么改网站。");
+      return;
+    }
+
+    setGeneratingAiSiteDraft(true);
+
+    try {
+      const result = await generateAiSiteDraft(
+        {
+          instruction,
+          language: editingLanguage,
+        },
+        adminToken,
+      );
+      const localizedIncoming = resolveContentForLanguage(result.content, editingLanguage);
+      const diffs = collectAiCopyDiffs(localizedDraft, localizedIncoming);
+      setPendingAiImport({
+        language: editingLanguage,
+        incoming: result.content,
+        localizedIncoming,
+        diffs,
+      });
+      setSelectedAiDiffIds(diffs.map((item) => item.id));
+
+      window.alert(
+        [
+          `AI 已生成草稿，发现 ${diffs.length} 项可应用改动。`,
+          ...result.notes.map((item) => `- ${item}`),
+        ].join("\n"),
+      );
+    } catch (error) {
+      window.alert(`AI 生成网站草稿失败: ${String(error)}`);
+    } finally {
+      setGeneratingAiSiteDraft(false);
+    }
+  };
+
   return (
     <div className="container admin-page">
       <div className="admin-header card">
@@ -1050,6 +1096,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
         <div className="admin-header-actions">
           <a className="button secondary" href="/">
             返回前台
+          </a>
+          <a className="button secondary" href="/admin/visual">
+            可视化编辑
           </a>
           <button
             className="button secondary"
@@ -1199,13 +1248,22 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           <div className="card admin-panel">
             <div className="admin-toolbar">
               <h3>AI 改稿工作流</h3>
-              <button className="button secondary" onClick={handleCopyInstructions} type="button" disabled={copyingInstructions}>
-                {copyingInstructions ? "复制中..." : "复制外部 AI 指令"}
-              </button>
+              <div className="admin-entity-actions">
+                <button className="button secondary" onClick={handleCopyInstructions} type="button" disabled={copyingInstructions}>
+                  {copyingInstructions ? "复制中..." : "复制外部 AI 指令"}
+                </button>
+                <button className="button primary" onClick={handleGenerateAiSiteDraft} type="button" disabled={generatingAiSiteDraft}>
+                  {generatingAiSiteDraft ? "生成中..." : "让 AI 直接生成草稿"}
+                </button>
+              </div>
             </div>
             <div className="entity-note">
-              推荐顺序：先点“导出 AI 文案包”，再把下方指令和导出的 JSON 一起发给外部 AI。对方改完后，再点“导入 AI 文案包”回传到网站。服务端会按白名单过滤，只接收允许修改的文案字段。
+              可以继续用导出/导入文案包，也可以直接让后台调用已配置的 AI 生成草稿。AI 返回后会进入差异预览，你确认后才会应用到网站。
             </div>
+            <label className="admin-field admin-full-span">
+              <span>直接发给网站 AI 的改版需求</span>
+              <textarea value={aiSiteInstruction} onChange={(event) => setAiSiteInstruction(event.target.value)} />
+            </label>
             <label className="admin-field admin-full-span">
               <span>发给外部 AI 的标准指令</span>
               <textarea value={externalAiInstructions} readOnly />

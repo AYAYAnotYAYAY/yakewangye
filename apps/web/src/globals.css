@@ -825,6 +825,60 @@ h1, h2, h3, h4 {
 }
 
 /* ============================================================
+   Visual Editor
+   ============================================================ */
+.visual-editor-bar-wrap {
+  padding: 24px 0 0;
+}
+
+.visual-editor-bar {
+  position: sticky;
+  top: 16px;
+  z-index: 20;
+  padding: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  border-color: rgba(11, 92, 255, 0.24);
+}
+
+.visual-editor-bar h1 {
+  margin: 8px 0 4px;
+  font-size: 24px;
+  letter-spacing: 0;
+}
+
+.visual-editor-bar p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.visual-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.inline-editable-text {
+  min-width: 1.5em;
+  border-radius: 6px;
+  outline: 1.5px dashed rgba(11, 92, 255, 0.36);
+  outline-offset: 3px;
+  cursor: text;
+  transition: background var(--transition-fast), outline-color var(--transition-fast);
+}
+
+.inline-editable-text:hover,
+.inline-editable-text:focus {
+  background: rgba(232, 239, 255, 0.82);
+  outline-color: rgba(11, 92, 255, 0.78);
+}
+
+/* ============================================================
    Admin
    ============================================================ */
 .admin-page {

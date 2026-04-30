@@ -11,6 +11,16 @@ export type ChatRepository = {
 
 function createJsonChatRepository(): ChatRepository {
   const { chatSessionsFilePath: sessionsFilePath } = getLocalStoragePaths();
+  let operationQueue: Promise<void> = Promise.resolve();
+
+  function runExclusive<T>(operation: () => Promise<T>) {
+    const result = operationQueue.then(operation, operation);
+    operationQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
 
   async function ensureSessionsFile() {
     await ensureChatStorage();
@@ -30,55 +40,61 @@ function createJsonChatRepository(): ChatRepository {
 
   return {
     async list() {
-      return readSessions();
+      return runExclusive(() => readSessions());
     },
     async getOrCreate(params) {
-      const sessions = await readSessions();
-      const existing = sessions.find((session) => session.sessionId === params.sessionId);
+      return runExclusive(async () => {
+        const sessions = await readSessions();
+        const existing = sessions.find((session) => session.sessionId === params.sessionId);
 
-      if (existing) {
-        return existing;
-      }
+        if (existing) {
+          return existing;
+        }
 
-      const now = new Date().toISOString();
-      const created: ChatSession = {
-        sessionId: params.sessionId,
-        language: params.language,
-        visitorId: params.visitorId,
-        startedAt: now,
-        updatedAt: now,
-        messages: [],
-      };
+        const now = new Date().toISOString();
+        const created: ChatSession = {
+          sessionId: params.sessionId,
+          language: params.language,
+          visitorId: params.visitorId,
+          startedAt: now,
+          updatedAt: now,
+          messages: [],
+        };
 
-      sessions.push(created);
-      await writeSessions(sessions);
-      return created;
+        sessions.push(created);
+        await writeSessions(sessions);
+        return created;
+      });
     },
     async appendMessage(sessionId, message) {
-      const sessions = await readSessions();
-      const target = sessions.find((session) => session.sessionId === sessionId);
+      return runExclusive(async () => {
+        const sessions = await readSessions();
+        const target = sessions.find((session) => session.sessionId === sessionId);
 
-      if (!target) {
-        throw new Error(`Chat session not found: ${sessionId}`);
-      }
+        if (!target) {
+          throw new Error(`Chat session not found: ${sessionId}`);
+        }
 
-      target.messages.push(message);
-      target.updatedAt = message.createdAt;
-      await writeSessions(sessions);
-      return target;
+        target.messages.push(message);
+        target.updatedAt = message.createdAt;
+        await writeSessions(sessions);
+        return target;
+      });
     },
     async updateTriage(sessionId, triage) {
-      const sessions = await readSessions();
-      const target = sessions.find((session) => session.sessionId === sessionId);
+      return runExclusive(async () => {
+        const sessions = await readSessions();
+        const target = sessions.find((session) => session.sessionId === sessionId);
 
-      if (!target) {
-        throw new Error(`Chat session not found: ${sessionId}`);
-      }
+        if (!target) {
+          throw new Error(`Chat session not found: ${sessionId}`);
+        }
 
-      target.triage = triage;
-      target.updatedAt = new Date().toISOString();
-      await writeSessions(sessions);
-      return target;
+        target.triage = triage;
+        target.updatedAt = new Date().toISOString();
+        await writeSessions(sessions);
+        return target;
+      });
     },
   };
 }

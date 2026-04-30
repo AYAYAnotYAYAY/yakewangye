@@ -17,6 +17,7 @@ import {
   validateAdminCredentials,
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
+import { generateWebsiteDraft } from "../../lib/admin-ai-gateway";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
 import {
   restoreAiCopyPackage,
@@ -63,6 +64,11 @@ const copyFolderSchema = z.object({
   sourcePath: z.string().trim().min(1),
   targetParentPath: z.string().optional(),
   newName: z.string().trim().min(1),
+});
+
+const aiWebsiteDraftSchema = z.object({
+  instruction: z.string().trim().min(1).max(2000),
+  language: z.enum(["zh", "ru", "en"]).default("zh"),
 });
 
 const supportedImageExtensions = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".heic", ".heif"]);
@@ -416,6 +422,39 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
       throw error;
     }
+  });
+
+  app.post("/api/admin/ai/site-draft", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const parsed = aiWebsiteDraftSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.flatten(),
+      });
+    }
+
+    const content = await readContent();
+    const library = await mediaLibraryRepository.getState();
+    const result = await generateWebsiteDraft({
+      config: content.aiConfig,
+      content,
+      mediaLibrary: library,
+      instruction: parsed.data.instruction,
+      language: parsed.data.language,
+    });
+
+    return {
+      ok: true,
+      content: result.content,
+      notes: result.notes,
+    };
   });
 
   app.get("/api/admin/media-library", async (request, reply) => {

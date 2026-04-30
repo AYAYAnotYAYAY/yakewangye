@@ -524,6 +524,27 @@ export async function saveContent(content: CmsContent, token: string) {
   return (await response.json()) as { ok: true; content: CmsContent };
 }
 
+export async function generateAiSiteDraft(payload: { instruction: string; language: Language }, token: string) {
+  const response = await fetchWithFallback("/api/admin/ai/site-draft", {
+    method: "POST",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "generate_ai_site_draft_failed"));
+  }
+
+  return (await response.json()) as {
+    ok: true;
+    content: CmsContent;
+    notes: string[];
+  };
+}
+
 function getDownloadFileName(response: Response, fallback: string) {
   const disposition = response.headers.get("content-disposition") ?? "";
   const match = disposition.match(/filename="([^"]+)"/i);
@@ -840,7 +861,7 @@ export async function sendChatMessage(payload: {
   });
 
   if (!response.ok) {
-    throw new Error("Failed to send chat message");
+    throw new Error(await parseErrorMessage(response, "Failed to send chat message"));
   }
 
   return (await response.json()) as {

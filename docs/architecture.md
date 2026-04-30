@@ -349,6 +349,15 @@ Metabase 地址：
 - temperature
 - maxTokens
 
+当前问诊服务端已经做了几层限制：
+
+- `/api/chat/triage` 对单条消息做长度限制，并按 IP + visitorId 做基础限流
+- `ai-gateway` 先用本地关键词白名单/黑名单判断话题，越界内容不调用外部模型
+- 允许话题只覆盖牙齿/口腔问题、牙科治疗、门诊/医院信息、医生与接待流程、价格预约、跨境到诊、路线翻译、住宿环境和 Telegram 转人工
+- 中文、俄语、英语会按前端传入的 `language` 生成本地兜底话术，并要求模型使用同一语言回复
+- `openai_compatible` 使用 Chat Completions 格式；`openai_responses` 使用 Responses 格式，都会优先要求模型返回结构化 JSON，再由服务端解析 triage
+- 模型不可用或输出不可解析时，会退回本地牙科问诊兜底回复，不把异常直接暴露给访客
+
 聊天记录当前存储在服务端 [`data/chat-sessions.json`](/Users/ayaya/Code/yakewangye/data/chat-sessions.json)，内容后台存储在 [`data/content.json`](/Users/ayaya/Code/yakewangye/data/content.json)。这两个 JSON 存储现在都已经通过 repository 抽象包了一层，后续切 PostgreSQL 时优先替换：
 
 - [`apps/api/src/lib/storage/content-repository.ts`](/Users/ayaya/Code/yakewangye/apps/api/src/lib/storage/content-repository.ts)

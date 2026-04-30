@@ -110,6 +110,7 @@ export function ChatWidget({ telegramUrl, language, dictionary }: ChatWidgetProp
             <textarea
               placeholder={dictionary.chatPlaceholder}
               value={input}
+              maxLength={1200}
               onChange={(event) => setInput(event.target.value)}
             />
             <div className="chat-buttons">

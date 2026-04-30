@@ -1,4 +1,4 @@
-import type { Article, CmsContent, Doctor, GalleryAsset, LandingPage, Language, PricingItem, ServiceItem } from "@quanyu/shared";
+import type { Article, CmsContent, Doctor, GalleryAsset, LandingPage, Language, PageSection, PricingItem, ServiceItem } from "@quanyu/shared";
 import { cmsContentSeed } from "@quanyu/shared";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -6,13 +6,14 @@ import { Footer } from "../components/layout/footer";
 import { Header } from "../components/layout/header";
 import { SectionRenderer } from "../components/section-renderer";
 import { ChatWidget } from "./components/chat-widget";
-import { detectPreferredLanguage, fetchContent, resolveAssetUrl } from "./lib/api";
+import { ADMIN_TOKEN_STORAGE_KEY, detectPreferredLanguage, fetchContent, resolveAssetUrl, saveContent } from "./lib/api";
 import {
   DEFAULT_LANGUAGE,
   normalizeLanguage,
   readStoredLanguage,
   resolveContentForLanguage,
   uiDictionary,
+  updateLocalizedContentDraft,
   writeStoredLanguage,
   type UiDictionary,
 } from "./lib/i18n";
@@ -421,6 +422,7 @@ export function App() {
   const [content, setContent] = useState<CmsContent>(cmsContentSeed);
   const [language, setLanguage] = useState<Language>(DEFAULT_LANGUAGE);
   const [loading, setLoading] = useState(true);
+  const [visualSaving, setVisualSaving] = useState(false);
   const [warning, setWarning] = useState("");
   const dictionary = uiDictionary[language];
   const contentWithFallbackI18n = useMemo(
@@ -525,8 +527,101 @@ export function App() {
     );
   }, [language, resolvedContent.homePage.seoDescription, resolvedContent.homePage.seoTitle, resolvedContent.homePage.title]);
 
+  const updateVisualSection = (sectionIndex: number, nextSection: PageSection) => {
+    setContent((current) => {
+      const nextContent = updateLocalizedContentDraft(current, language, (localized) => ({
+        ...localized,
+        homePage: {
+          ...localized.homePage,
+          sections: localized.homePage.sections.map((section, index) =>
+            index === sectionIndex ? nextSection : section,
+          ),
+        },
+      }));
+      writeCachedContent(nextContent);
+      return nextContent;
+    });
+  };
+
+  const saveVisualContent = async () => {
+    const token = window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+
+    if (!token) {
+      window.alert("请先登录后台，再进入可视化编辑。");
+      window.location.href = "/admin";
+      return;
+    }
+
+    setVisualSaving(true);
+
+    try {
+      const response = await saveContent(content, token);
+      setContent(response.content);
+      writeCachedContent(response.content);
+      window.alert("可视化编辑内容已保存。");
+    } catch (error) {
+      window.alert(`保存失败: ${String(error)}`);
+    } finally {
+      setVisualSaving(false);
+    }
+  };
+
   if (pathname === "/admin") {
     return <AdminPage content={content} onSaved={setContent} />;
+  }
+
+  if (pathname === "/admin/visual") {
+    const hasAdminToken = Boolean(window.localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY));
+
+    return (
+      <PageShell content={resolvedContent} language={language} dictionary={dictionary} onLanguageChange={applyLanguage}>
+        <section className="visual-editor-bar-wrap">
+          <div className="container">
+            <div className="visual-editor-bar card">
+              <div>
+                <div className="eyebrow">Visual Edit</div>
+                <h1>直接在首页改文字</h1>
+                <p>点击页面中的虚线文字即可编辑。当前只编辑首页模块文案，保存后写入当前语言内容。</p>
+              </div>
+              <div className="visual-editor-actions">
+                {(["zh", "ru", "en"] as Language[]).map((item) => (
+                  <button
+                    key={item}
+                    className={`site-language-chip${language === item ? " active" : ""}`}
+                    onClick={() => applyLanguage(item)}
+                    type="button"
+                  >
+                    {item.toUpperCase()}
+                  </button>
+                ))}
+                <a className="button secondary" href="/admin">
+                  返回后台
+                </a>
+                <button className="button primary" onClick={saveVisualContent} type="button" disabled={visualSaving || !hasAdminToken}>
+                  {visualSaving ? "保存中..." : hasAdminToken ? "保存可视化修改" : "需要先登录后台"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+        {warning ? <RuntimeNotice message={warning} dictionary={dictionary} /> : null}
+        {resolvedContent.homePage.sections.map((section, sectionIndex) => (
+          <SectionRenderer
+            key={section.id}
+            section={section}
+            editable
+            onSectionChange={(nextSection) => updateVisualSection(sectionIndex, nextSection)}
+          />
+        ))}
+        <TriageFlowSection content={resolvedContent} dictionary={dictionary} />
+        <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} />
+        <DoctorList items={resolvedContent.doctors} anchorId="doctors" dictionary={dictionary} />
+        <PricingList items={resolvedContent.pricing} anchorId="pricing" dictionary={dictionary} />
+        <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} />
+        <ArticleList items={resolvedContent.articles} anchorId="articles" dictionary={dictionary} />
+        <ContactBand content={resolvedContent} dictionary={dictionary} />
+      </PageShell>
+    );
   }
 
   if (pathname === "/admin/album") {
