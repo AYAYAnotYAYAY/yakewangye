@@ -1,6 +1,7 @@
 import type { Language, SiteSettings } from "@quanyu/shared";
 import { useEffect, useRef, useState } from "react";
-import { SUPPORTED_LANGUAGES, type UiDictionary } from "../../src/lib/i18n";
+import { type UiDictionary } from "../../src/lib/i18n";
+import { LanguageMenu } from "../language-menu";
 
 type HeaderProps = {
   settings: SiteSettings;
@@ -56,18 +57,7 @@ export function Header({ settings, language, dictionary, onLanguageChange }: Hea
               {item.label}
             </a>
           ))}
-          <div className="site-language-switcher" aria-label={dictionary.langLabel}>
-            {SUPPORTED_LANGUAGES.map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={`site-language-chip${item === language ? " active" : ""}`}
-                onClick={() => onLanguageChange(item)}
-              >
-                {item.toUpperCase()}
-              </button>
-            ))}
-          </div>
+          <LanguageMenu language={language} label={dictionary.langLabel} onChange={onLanguageChange} />
           <a
             className="button primary site-nav-cta"
             href={settings.primaryContact.telegramUrl}
@@ -93,19 +83,12 @@ export function Header({ settings, language, dictionary, onLanguageChange }: Hea
       {/* Mobile drawer */}
       <div className={`site-nav-mobile${menuOpen ? " open" : ""}`}>
         <div className="site-nav-mobile-languages">
-          {SUPPORTED_LANGUAGES.map((item) => (
-            <button
-              key={item}
-              type="button"
-              className={`site-language-chip${item === language ? " active" : ""}`}
-              onClick={() => {
-                onLanguageChange(item);
-                handleNavClick();
-              }}
-            >
-              {item.toUpperCase()}
-            </button>
-          ))}
+          <LanguageMenu
+            language={language}
+            label={dictionary.langLabel}
+            onChange={onLanguageChange}
+            onAfterChange={handleNavClick}
+          />
         </div>
         {settings.navigation.map((item) => (
           <a key={item.id} href={toAnchor(item.href)} onClick={handleNavClick}>

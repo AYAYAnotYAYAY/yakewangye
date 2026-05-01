@@ -458,13 +458,6 @@ h1, h2, h3, h4 {
   gap: 4px;
 }
 
-.site-language-switcher,
-.site-nav-mobile-languages {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .site-language-chip {
   min-width: 48px;
   height: 36px;
@@ -489,6 +482,93 @@ h1, h2, h3, h4 {
 .site-language-chip.dirty {
   border-color: rgba(242, 87, 87, 0.32);
   box-shadow: inset 0 0 0 1px rgba(242, 87, 87, 0.08);
+}
+
+.site-language-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.site-language-menu-trigger {
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.site-language-menu-trigger:hover,
+.site-language-menu-trigger.open {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+}
+
+.site-language-flag {
+  font-size: 17px;
+  line-height: 1;
+}
+
+.site-language-chevron {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1;
+}
+
+.site-language-menu-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 260;
+  min-width: 172px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: var(--shadow-lg);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  backdrop-filter: blur(16px) saturate(180%);
+}
+
+.site-language-menu-option {
+  width: 100%;
+  height: 40px;
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.site-language-menu-option:hover,
+.site-language-menu-option.active {
+  color: var(--primary);
+  background: var(--primary-light);
+}
+
+.site-language-code {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
 }
 
 .site-nav a {
@@ -591,6 +671,13 @@ h1, h2, h3, h4 {
 
 .site-nav-mobile-languages {
   margin-bottom: 6px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.site-nav-mobile-languages .site-language-menu-popover {
+  left: 0;
+  right: auto;
 }
 
 @keyframes slideDown {

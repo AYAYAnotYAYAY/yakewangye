@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { Footer } from "../components/layout/footer";
 import { Header } from "../components/layout/header";
+import { LanguageMenu } from "../components/language-menu";
 import { SectionRenderer } from "../components/section-renderer";
 import { ChatWidget } from "./components/chat-widget";
 import { ADMIN_TOKEN_STORAGE_KEY, detectPreferredLanguage, fetchContent, resolveAssetUrl, saveContent } from "./lib/api";
@@ -584,16 +585,7 @@ export function App() {
                 <p>点击页面中的虚线文字即可编辑。当前只编辑首页模块文案，保存后写入当前语言内容。</p>
               </div>
               <div className="visual-editor-actions">
-                {(["zh", "ru", "en"] as Language[]).map((item) => (
-                  <button
-                    key={item}
-                    className={`site-language-chip${language === item ? " active" : ""}`}
-                    onClick={() => applyLanguage(item)}
-                    type="button"
-                  >
-                    {item.toUpperCase()}
-                  </button>
-                ))}
+                <LanguageMenu language={language} label={dictionary.langLabel} onChange={applyLanguage} />
                 <a className="button secondary" href="/admin">
                   返回后台
                 </a>
