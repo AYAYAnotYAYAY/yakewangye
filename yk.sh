@@ -1014,34 +1014,36 @@ bootstrap_or_repair_deploy() {
 }
 
 create_backup() {
-  step "创建备份"
+  step "创建全量备份"
 
   ensure_repo_exists || return 1
   mkdir -p "${BACKUP_ROOT}"
 
-  local ts tmp_dir payload_dir backup_file app_parent app_name
+  local ts tmp_dir payload_dir backup_file app_parent app_name data_dir
   ts="$(date +%Y%m%d-%H%M%S)"
   tmp_dir="$(mktemp -d /tmp/yk-backup.XXXXXX)"
   payload_dir="${tmp_dir}/payload"
   backup_file="${BACKUP_ROOT}/yk-backup-${ts}.tar.gz"
   app_parent="$(dirname "${APP_DIR}")"
   app_name="$(basename "${APP_DIR}")"
+  data_dir="$(configured_data_dir)"
 
   mkdir -p "${payload_dir}"
 
   cat > "${payload_dir}/manifest.txt" <<EOF
 created_at=$(date -Iseconds)
+backup_type=full
 host=$(hostname)
 repo_branch=$(git -C "${APP_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 repo_commit=$(git -C "${APP_DIR}" rev-parse HEAD 2>/dev/null || echo unknown)
 app_dir=${APP_DIR}
-data_dir=$(configured_data_dir)
+data_dir=${data_dir}
 web_root=${WEB_ROOT}
 nginx_conf=${NGINX_CONF}
 pm2_app=${PM2_APP}
 EOF
 
-  info "打包项目目录（排除 .git / node_modules / dist 缓存）..."
+  info "打包项目目录（保留 .env，排除 .git / node_modules / dist 缓存）..."
   tar -C "${app_parent}" \
     --exclude="${app_name}/.git" \
     --exclude="${app_name}/node_modules" \
@@ -1053,11 +1055,17 @@ EOF
     -czf "${payload_dir}/app.tar.gz" "${app_name}"
 
   if [[ -d "${WEB_ROOT}" ]]; then
+    info "打包前端静态目录: ${WEB_ROOT}"
     tar -C "$(dirname "${WEB_ROOT}")" -czf "${payload_dir}/web-root.tar.gz" "$(basename "${WEB_ROOT}")"
+  else
+    warn "未找到前端静态目录，跳过: ${WEB_ROOT}"
   fi
 
-  if [[ -d "$(configured_data_dir)" ]]; then
-    tar -C "$(dirname "$(configured_data_dir)")" -czf "${payload_dir}/data-root.tar.gz" "$(basename "$(configured_data_dir)")"
+  if [[ -d "${data_dir}" ]]; then
+    info "打包独立数据目录: ${data_dir}"
+    tar -C "$(dirname "${data_dir}")" -czf "${payload_dir}/data-root.tar.gz" "$(basename "${data_dir}")"
+  else
+    warn "未找到独立数据目录，跳过: ${data_dir}"
   fi
 
   if has_nginx_conf; then
@@ -1074,25 +1082,52 @@ EOF
   success "备份已生成: ${backup_file}"
 }
 
-choose_backup_file() {
+backup_modified_time() {
+  local file="${1}"
+
+  stat -c '%y' "${file}" 2>/dev/null | cut -d'.' -f1 || echo "unknown"
+}
+
+backup_size() {
+  local file="${1}"
+
+  du -h "${file}" 2>/dev/null | awk '{ print $1 }'
+}
+
+load_backup_files() {
   mkdir -p "${BACKUP_ROOT}"
   mapfile -t BACKUP_FILES < <(find "${BACKUP_ROOT}" -maxdepth 1 -type f -name 'yk-backup-*.tar.gz' | sort -r)
+}
+
+list_backup_files() {
+  load_backup_files
 
   if [[ ${#BACKUP_FILES[@]} -eq 0 ]]; then
-    error "未找到备份文件: ${BACKUP_ROOT}"
+    warn "未找到备份文件: ${BACKUP_ROOT}"
     return 1
   fi
 
   echo ""
-  echo "可用备份:"
-  local i=1
+  printf '%-5s %-12s %-20s %s\n' "编号" "大小" "修改时间" "文件"
+  printf '%-5s %-12s %-20s %s\n' "----" "----" "--------" "----"
+
+  local i=1 file
   for file in "${BACKUP_FILES[@]}"; do
-    echo "  ${i}. ${file}"
+    printf '%-5s %-12s %-20s %s\n' "${i}" "$(backup_size "${file}")" "$(backup_modified_time "${file}")" "$(basename "${file}")"
     ((i++))
   done
+}
+
+choose_backup_file() {
+  local prompt="${1:-请输入备份编号:}"
+
+  list_backup_files || {
+    error "未找到备份文件: ${BACKUP_ROOT}"
+    return 1
+  }
 
   local choice=""
-  read -r -p "请输入要还原的备份编号: " choice
+  read -r -p "${prompt} " choice
 
   if [[ ! "${choice}" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#BACKUP_FILES[@]} )); then
     error "无效编号"
@@ -1103,12 +1138,140 @@ choose_backup_file() {
   return 0
 }
 
-restore_backup() {
-  step "还原备份"
+show_backup_detail() {
+  step "查看备份详情"
 
-  choose_backup_file || return 1
+  choose_backup_file "请输入要查看的备份编号:" || return 1
+
+  echo ""
+  echo "文件: ${SELECTED_BACKUP_FILE}"
+  echo "大小: $(backup_size "${SELECTED_BACKUP_FILE}")"
+  echo "修改时间: $(backup_modified_time "${SELECTED_BACKUP_FILE}")"
+  echo ""
+  echo "manifest:"
+  tar -xOf "${SELECTED_BACKUP_FILE}" payload/manifest.txt 2>/dev/null || warn "未读取到 manifest.txt"
+  echo ""
+  echo "payload 内容:"
+  tar -tzf "${SELECTED_BACKUP_FILE}" 2>/dev/null | sed -n '1,80p'
+}
+
+delete_backup_file() {
+  step "删除备份文件"
+
+  choose_backup_file "请输入要删除的备份编号:" || return 1
+
+  warn "即将删除备份: ${SELECTED_BACKUP_FILE}"
+  ask_yes_no "确认删除？此操作不可恢复。" || return 0
+
+  rm -f "${SELECTED_BACKUP_FILE}"
+  success "备份已删除"
+}
+
+prune_backup_files() {
+  step "清理旧备份"
+
+  load_backup_files
+
+  if [[ ${#BACKUP_FILES[@]} -eq 0 ]]; then
+    warn "未找到备份文件: ${BACKUP_ROOT}"
+    return 0
+  fi
+
+  local keep_count delete_count file
+  keep_count="$(prompt_value "保留最近多少个备份" "10")"
+
+  if [[ ! "${keep_count}" =~ ^[0-9]+$ ]] || (( keep_count < 1 )); then
+    error "保留数量必须是大于 0 的整数"
+    return 1
+  fi
+
+  if (( ${#BACKUP_FILES[@]} <= keep_count )); then
+    success "当前备份数量 ${#BACKUP_FILES[@]}，不超过保留数量 ${keep_count}，无需清理"
+    return 0
+  fi
+
+  delete_count=$(( ${#BACKUP_FILES[@]} - keep_count ))
+  warn "将删除最旧的 ${delete_count} 个备份，保留最近 ${keep_count} 个"
+
+  local i
+  for (( i=keep_count; i<${#BACKUP_FILES[@]}; i++ )); do
+    file="${BACKUP_FILES[$i]}"
+    echo "  - $(basename "${file}") ($(backup_size "${file}"))"
+  done
+
+  ask_yes_no "确认批量删除这些旧备份？" || return 0
+
+  for (( i=keep_count; i<${#BACKUP_FILES[@]}; i++ )); do
+    rm -f "${BACKUP_FILES[$i]}"
+  done
+
+  success "旧备份清理完成"
+}
+
+restore_data_from_backup() {
+  step "仅恢复数据目录"
+
+  choose_backup_file "请输入要恢复数据的备份编号:" || return 1
+
+  warn "即将仅恢复独立数据目录: $(configured_data_dir)"
+  warn "不会覆盖代码、前端静态目录、nginx 配置或 PM2 dump"
+  warn "恢复前会先自动创建一次全量备份"
+  ask_yes_no "确认继续恢复数据？" || return 0
+
+  create_backup
+
+  local had_pm2=false tmp_dir data_dir restored_dir
+  pm2_app_exists && had_pm2=true
+
+  if [[ "${had_pm2}" == "true" ]]; then
+    pm2 stop "${PM2_APP}" >/dev/null 2>&1 || true
+  fi
+
+  tmp_dir="$(mktemp -d /tmp/yk-data-restore.XXXXXX)"
+  tar -xzf "${SELECTED_BACKUP_FILE}" -C "${tmp_dir}"
+
+  if [[ ! -f "${tmp_dir}/payload/data-root.tar.gz" ]]; then
+    rm -rf "${tmp_dir}"
+    error "这个备份不包含 data-root.tar.gz，无法执行数据恢复"
+    if [[ "${had_pm2}" == "true" ]]; then
+      ensure_pm2_api_process || true
+    fi
+    return 1
+  fi
+
+  data_dir="$(configured_data_dir)"
+  mkdir -p "${tmp_dir}/data"
+  tar -xzf "${tmp_dir}/payload/data-root.tar.gz" -C "${tmp_dir}/data"
+  restored_dir="$(find "${tmp_dir}/data" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+
+  if [[ -z "${restored_dir}" ]]; then
+    rm -rf "${tmp_dir}"
+    error "未能从备份中解析出数据目录"
+    if [[ "${had_pm2}" == "true" ]]; then
+      ensure_pm2_api_process || true
+    fi
+    return 1
+  fi
+
+  mkdir -p "${data_dir}"
+  rsync -a --delete "${restored_dir}/" "${data_dir}/"
+  rm -rf "${tmp_dir}"
+
+  if [[ "${had_pm2}" == "true" ]]; then
+    ensure_pm2_api_process || true
+  fi
+
+  run_health_checks || true
+  success "数据目录已恢复: ${data_dir}"
+}
+
+restore_backup() {
+  step "整包还原备份"
+
+  choose_backup_file "请输入要整包还原的备份编号:" || return 1
 
   warn "即将还原备份: ${SELECTED_BACKUP_FILE}"
+  warn "还原内容包括项目文件、静态目录、数据目录、nginx 配置和 PM2 dump（若备份中存在）"
   warn "还原前会先自动再备份一次当前状态"
   ask_yes_no "确认继续还原？" || return 0
 
@@ -1135,7 +1298,7 @@ restore_backup() {
     mkdir -p "${tmp_dir}/app"
     tar -xzf "${tmp_dir}/payload/app.tar.gz" -C "${tmp_dir}/app"
     mkdir -p "${APP_DIR}"
-    rsync -a --delete "${tmp_dir}/app/$(basename "${APP_DIR}")/" "${APP_DIR}/"
+    rsync -a --delete --exclude=".git" "${tmp_dir}/app/$(basename "${APP_DIR}")/" "${APP_DIR}/"
   fi
 
   if [[ -f "${tmp_dir}/payload/web-root.tar.gz" ]]; then
@@ -1150,8 +1313,15 @@ restore_backup() {
     data_dir="$(configured_data_dir)"
     mkdir -p "${tmp_dir}/data"
     tar -xzf "${tmp_dir}/payload/data-root.tar.gz" -C "${tmp_dir}/data"
-    mkdir -p "${data_dir}"
-    rsync -a --delete "${tmp_dir}/data/$(basename "${data_dir}")/" "${data_dir}/"
+    local restored_dir
+    restored_dir="$(find "${tmp_dir}/data" -mindepth 1 -maxdepth 1 -type d | head -n 1 || true)"
+
+    if [[ -n "${restored_dir}" ]]; then
+      mkdir -p "${data_dir}"
+      rsync -a --delete "${restored_dir}/" "${data_dir}/"
+    else
+      warn "未能解析备份中的数据目录，跳过数据恢复"
+    fi
   fi
 
   if [[ -f "${tmp_dir}/payload/nginx.conf" ]]; then
@@ -1183,6 +1353,55 @@ restore_backup() {
   success "备份还原完成"
 }
 
+show_backup_manager_menu() {
+  clear || true
+  echo -e "${BOLD}备份文件管理${RESET}"
+  echo ""
+  echo "备份目录: ${BACKUP_ROOT}"
+  echo ""
+  echo "1. 列出备份文件"
+  echo "2. 查看备份详情"
+  echo "3. 删除指定备份"
+  echo "4. 清理旧备份（保留最近 N 个）"
+  echo "0. 返回主菜单"
+  echo ""
+}
+
+manage_backup_files() {
+  while true; do
+    show_backup_manager_menu
+    local choice=""
+    read -r -p "请输入功能编号: " choice
+
+    case "${choice}" in
+      1)
+        step "备份文件列表"
+        list_backup_files || true
+        pause
+        ;;
+      2)
+        show_backup_detail || true
+        pause
+        ;;
+      3)
+        delete_backup_file || true
+        pause
+        ;;
+      4)
+        prune_backup_files || true
+        pause
+        ;;
+      0)
+        return 0
+        ;;
+      *)
+        warn "无效选项，请重新输入"
+        pause
+        ;;
+    esac
+  done
+}
+
 show_menu() {
   clear || true
   echo -e "${BOLD}yk 运维菜单${RESET}"
@@ -1191,8 +1410,10 @@ show_menu() {
   echo "2. 首次部署 / 修复部署"
   echo "3. 安全更新代码并按检测结果重启服务"
   echo "4. 单独执行健康检查"
-  echo "5. 创建打包备份"
-  echo "6. 从备份还原"
+  echo "5. 创建全量备份"
+  echo "6. 从备份整包还原"
+  echo "7. 从备份仅恢复数据"
+  echo "8. 管理备份文件"
   echo "0. 退出"
   echo ""
 }
@@ -1230,6 +1451,13 @@ main() {
       6)
         restore_backup
         pause
+        ;;
+      7)
+        restore_data_from_backup
+        pause
+        ;;
+      8)
+        manage_backup_files
         ;;
       0)
         exit 0

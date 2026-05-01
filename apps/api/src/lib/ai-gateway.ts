@@ -795,12 +795,7 @@ function buildChatRequestBody(params: {
 
   if (params.structured) {
     body.response_format = {
-      type: "json_schema",
-      json_schema: {
-        name: "dental_consultation_reply",
-        strict: true,
-        schema: MODEL_REPLY_JSON_SCHEMA,
-      },
+      type: "json_object",
     };
   }
 
@@ -880,7 +875,8 @@ async function postJson(params: {
   }
 
   if (!response.ok) {
-    throw new Error(`AI provider error: ${response.status}`);
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`AI provider error: ${response.status}${errorText ? ` ${errorText.slice(0, 600)}` : ""}`);
   }
 
   return response.json() as Promise<unknown>;
@@ -968,6 +964,56 @@ async function callOpenAiResponses(params: {
     fallbackBody: buildResponsesRequestBody({ ...params, structured: false }),
   });
   return buildReplyFromModelText(extractResponsesText(payload), fallbackTriage, params.language);
+}
+
+export async function testAiProviderConnection(config: AiConfig) {
+  if (config.provider === "mock") {
+    return {
+      ok: false,
+      message: "当前供应商是 Mock，本地占位模式不会调用外部 AI。",
+    };
+  }
+
+  if (!config.apiKey.trim()) {
+    return {
+      ok: false,
+      message: "API Key 为空。",
+    };
+  }
+
+  const reply = await (config.provider === "openai_responses"
+    ? callOpenAiResponses({
+        config,
+        userMessage: "我想咨询牙齿问题，请只返回测试回复。",
+        language: "zh",
+        history: [
+          {
+            id: "test-user",
+            role: "user",
+            content: "我想咨询牙齿问题，请只返回测试回复。",
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      })
+    : callOpenAiCompatible({
+        config,
+        userMessage: "我想咨询牙齿问题，请只返回测试回复。",
+        language: "zh",
+        history: [
+          {
+            id: "test-user",
+            role: "user",
+            content: "我想咨询牙齿问题，请只返回测试回复。",
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      }));
+
+  return {
+    ok: true,
+    message: reply.assistantMessage.content,
+    triage: reply.triage,
+  };
 }
 
 export async function generateChatReply(params: {

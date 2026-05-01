@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
-import { cmsContentSchema } from "@quanyu/shared";
+import { aiConfigSchema, cmsContentSchema } from "@quanyu/shared";
 import { z } from "zod";
 import {
   getAdminStatus,
@@ -18,6 +18,7 @@ import {
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
 import { generateWebsiteDraft } from "../../lib/admin-ai-gateway";
+import { testAiProviderConnection } from "../../lib/ai-gateway";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
 import {
   restoreAiCopyPackage,
@@ -69,6 +70,10 @@ const copyFolderSchema = z.object({
 const aiWebsiteDraftSchema = z.object({
   instruction: z.string().trim().min(1).max(2000),
   language: z.enum(["zh", "ru", "en"]).default("zh"),
+});
+
+const aiConfigTestSchema = z.object({
+  config: aiConfigSchema,
 });
 
 const supportedImageExtensions = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".heic", ".heif"]);
@@ -455,6 +460,38 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       content: result.content,
       notes: result.notes,
     };
+  });
+
+  app.post("/api/admin/ai/test", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const parsed = aiConfigTestSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      const result = await testAiProviderConnection(parsed.data.config);
+      return {
+        ok: result.ok,
+        message: result.message,
+        triage: result.triage,
+      };
+    } catch (error) {
+      return reply.status(502).send({
+        ok: false,
+        error: "ai_provider_test_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   app.get("/api/admin/media-library", async (request, reply) => {

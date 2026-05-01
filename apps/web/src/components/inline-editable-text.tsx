@@ -45,7 +45,6 @@ export function InlineEditableText({
       contentEditable
       suppressContentEditableWarning
       spellCheck={false}
-      onInput={commit}
       onBlur={commit}
       onKeyDown={handleKeyDown}
     >

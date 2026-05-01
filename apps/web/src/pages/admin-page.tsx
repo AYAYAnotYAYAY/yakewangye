@@ -25,6 +25,7 @@ import {
   restoreAdminBackup,
   saveContent,
   setupAdmin,
+  testAiConfig,
 } from "../lib/api";
 import type { ReactNode } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -771,6 +772,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [restoringAiCopy, setRestoringAiCopy] = useState(false);
   const [copyingInstructions, setCopyingInstructions] = useState(false);
   const [generatingAiSiteDraft, setGeneratingAiSiteDraft] = useState(false);
+  const [testingAiConfig, setTestingAiConfig] = useState(false);
   const [aiSiteInstruction, setAiSiteInstruction] = useState(
     "根据当前素材库，优化首页首屏、服务卡片、流程说明和图册文案，让网站更像真实牙科门诊官网，并更适合俄罗斯/中国患者咨询转化。",
   );
@@ -1059,6 +1061,19 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
       window.alert(`AI 生成网站草稿失败: ${String(error)}`);
     } finally {
       setGeneratingAiSiteDraft(false);
+    }
+  };
+
+  const handleTestAiConfig = async () => {
+    setTestingAiConfig(true);
+
+    try {
+      const result = await testAiConfig(draft.aiConfig, adminToken);
+      window.alert(`AI 连接测试成功。\n\n模型回复：${result.message}`);
+    } catch (error) {
+      window.alert(`AI 连接测试失败：${String(error)}`);
+    } finally {
+      setTestingAiConfig(false);
     }
   };
 
@@ -1387,7 +1402,12 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
 
           {activeTab === "ai" ? (
             <div className="card admin-panel">
-              <h2>AI 配置与提示词</h2>
+              <div className="admin-toolbar">
+                <h2>AI 配置与提示词</h2>
+                <button className="button secondary" onClick={handleTestAiConfig} type="button" disabled={testingAiConfig}>
+                  {testingAiConfig ? "测试中..." : "测试 AI 连接"}
+                </button>
+              </div>
               <div className="admin-grid">
                 <label className="admin-field">
                   <span>供应商类型</span>

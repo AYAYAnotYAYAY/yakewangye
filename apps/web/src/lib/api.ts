@@ -1,4 +1,4 @@
-import type { ChatSession, CmsContent, Language, MediaLibraryAsset, MediaLibraryState } from "@quanyu/shared";
+import type { AiConfig, ChatSession, CmsContent, Language, MediaLibraryAsset, MediaLibraryState } from "@quanyu/shared";
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 export const ADMIN_TOKEN_STORAGE_KEY = "quanyu_admin_token";
@@ -542,6 +542,32 @@ export async function generateAiSiteDraft(payload: { instruction: string; langua
     ok: true;
     content: CmsContent;
     notes: string[];
+  };
+}
+
+export async function testAiConfig(config: AiConfig, token: string) {
+  const response = await fetchWithFallback("/api/admin/ai/test", {
+    method: "POST",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ config }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as {
+    ok?: boolean;
+    message?: string;
+    error?: string;
+  } | null;
+
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.message || payload?.error || "ai_config_test_failed");
+  }
+
+  return payload as {
+    ok: true;
+    message: string;
   };
 }
 
