@@ -20,6 +20,7 @@ import {
   fetchAdminStatus,
   fetchChatSessions,
   fetchMediaLibrary,
+  generateAiVisualSiteDraft,
   generateAiSiteDraft,
   loginAdmin,
   restoreAdminBackup,
@@ -64,6 +65,8 @@ type AiDiffEntry = {
 };
 
 type TabKey =
+  | "overview"
+  | "aiDraft"
   | "site"
   | "ai"
   | "home"
@@ -73,18 +76,22 @@ type TabKey =
   | "pricing"
   | "gallery"
   | "media"
+  | "backup"
   | "pages";
 
 const ADMIN_TABS: Array<[TabKey, string]> = [
+  ["overview", "总览入口"],
+  ["aiDraft", "AI 改内容"],
   ["site", "站点设置"],
   ["ai", "AI 配置"],
+  ["media", "素材库管理"],
+  ["gallery", "相册/图册"],
   ["home", "首页"],
   ["articles", "文章"],
   ["doctors", "医生"],
   ["services", "服务"],
   ["pricing", "价格"],
-  ["gallery", "图册视频"],
-  ["media", "素材库"],
+  ["backup", "备份恢复"],
   ["pages", "自定义页"],
 ];
 
@@ -762,7 +769,7 @@ function EntityListEditor<T extends { id: string }>(props: {
 
 function AdminConsole({ content, onSaved, adminToken, username, onLogout }: AdminConsoleProps) {
   const [draft, setDraft] = useState<CmsContent>(content);
-  const [activeTab, setActiveTab] = useState<TabKey>("site");
+  const [activeTab, setActiveTab] = useState<TabKey>("overview");
   const [editingLanguage, setEditingLanguage] = useState<Language>(DEFAULT_LANGUAGE);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -772,10 +779,15 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [restoringAiCopy, setRestoringAiCopy] = useState(false);
   const [copyingInstructions, setCopyingInstructions] = useState(false);
   const [generatingAiSiteDraft, setGeneratingAiSiteDraft] = useState(false);
+  const [generatingAiVisualDraft, setGeneratingAiVisualDraft] = useState(false);
   const [testingAiConfig, setTestingAiConfig] = useState(false);
   const [aiSiteInstruction, setAiSiteInstruction] = useState(
     "根据当前素材库，优化首页首屏、服务卡片、流程说明和图册文案，让网站更像真实牙科门诊官网，并更适合俄罗斯/中国患者咨询转化。",
   );
+  const [aiVisualInstruction, setAiVisualInstruction] = useState(
+    "请根据截图指出的位置和我的描述修改网站内容，优先改文案、按钮、模块表达和素材选择。",
+  );
+  const [aiVisualScreenshot, setAiVisualScreenshot] = useState<File | null>(null);
   const [pendingAiImport, setPendingAiImport] = useState<PendingAiImport | null>(null);
   const [selectedAiDiffIds, setSelectedAiDiffIds] = useState<string[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -804,9 +816,18 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     return result;
   }, [content, draft]);
   const dirtyLanguageCount = SUPPORTED_LANGUAGES.filter((language) => dirtyLanguages[language]).length;
+  const aiVisualScreenshotPreview = useMemo(
+    () => (aiVisualScreenshot ? window.URL.createObjectURL(aiVisualScreenshot) : ""),
+    [aiVisualScreenshot],
+  );
 
   const updateDraft = (mutator: (current: CmsContent) => CmsContent) => {
     setDraft((current) => updateLocalizedContentDraft(current, editingLanguage, mutator));
+  };
+
+  const openAdminTab = (tab: TabKey) => {
+    setActiveTab(tab);
+    setMobileNavOpen(false);
   };
 
   useEffect(() => {
@@ -838,6 +859,14 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
       setSelectedAiDiffIds([]);
     }
   }, [editingLanguage, pendingAiImport]);
+
+  useEffect(() => {
+    return () => {
+      if (aiVisualScreenshotPreview) {
+        window.URL.revokeObjectURL(aiVisualScreenshotPreview);
+      }
+    };
+  }, [aiVisualScreenshotPreview]);
 
   const save = async () => {
     setSaving(true);
@@ -1064,6 +1093,53 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     }
   };
 
+  const handleGenerateAiVisualDraft = async () => {
+    const instruction = aiVisualInstruction.trim();
+
+    if (!instruction) {
+      window.alert("请先输入截图要怎么改。");
+      return;
+    }
+
+    if (!aiVisualScreenshot) {
+      window.alert("请先上传一张网站截图。");
+      return;
+    }
+
+    setGeneratingAiVisualDraft(true);
+
+    try {
+      const result = await generateAiVisualSiteDraft(
+        {
+          instruction,
+          language: editingLanguage,
+          screenshot: aiVisualScreenshot,
+        },
+        adminToken,
+      );
+      const localizedIncoming = resolveContentForLanguage(result.content, editingLanguage);
+      const diffs = collectAiCopyDiffs(localizedDraft, localizedIncoming);
+      setPendingAiImport({
+        language: editingLanguage,
+        incoming: result.content,
+        localizedIncoming,
+        diffs,
+      });
+      setSelectedAiDiffIds(diffs.map((item) => item.id));
+
+      window.alert(
+        [
+          `AI 已根据截图生成草稿，发现 ${diffs.length} 项可应用改动。`,
+          ...result.notes.map((item) => `- ${item}`),
+        ].join("\n"),
+      );
+    } catch (error) {
+      window.alert(`AI 截图改站失败: ${String(error)}`);
+    } finally {
+      setGeneratingAiVisualDraft(false);
+    }
+  };
+
   const handleTestAiConfig = async () => {
     setTestingAiConfig(true);
 
@@ -1172,12 +1248,15 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                   <button
                     key={key}
                     className={`admin-nav-item ${activeTab === key ? "active" : ""}`}
-                    onClick={() => setActiveTab(key)}
+                    onClick={() => openAdminTab(key)}
                     type="button"
                   >
                     {label}
                   </button>
                 ))}
+                <a className="admin-nav-item admin-nav-link" href="/admin/visual">
+                  可视化编辑
+                </a>
               </div>
             ) : null}
           </div>
@@ -1186,17 +1265,55 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
               <button
                 key={key}
                 className={`admin-nav-item ${activeTab === key ? "active" : ""}`}
-                onClick={() => setActiveTab(key)}
+                onClick={() => openAdminTab(key)}
                 type="button"
               >
                 {label}
               </button>
             ))}
+            <a className="admin-nav-item admin-nav-link" href="/admin/visual">
+              可视化编辑
+            </a>
           </div>
         </aside>
 
         <section className="admin-content">
-          {pendingAiImport ? (
+          {activeTab === "overview" ? (
+            <div className="card admin-panel">
+              <div className="admin-toolbar">
+                <h2>后台功能入口</h2>
+                <div className="entity-note">常用修改、素材、AI 和备份功能都可以从这里进入。</div>
+              </div>
+              <div className="admin-entry-grid">
+                <button className="admin-entry-card" onClick={() => openAdminTab("aiDraft")} type="button">
+                  <strong>AI 改内容</strong>
+                  <span>用自然语言、截图和素材库生成网站草稿，确认差异后再应用。</span>
+                </button>
+                <a className="admin-entry-card" href="/admin/visual">
+                  <strong>可视化编辑主页</strong>
+                  <span>直接在首页点文字修改，适合快速改首屏、服务、流程和图册文案。</span>
+                </a>
+                <button className="admin-entry-card" onClick={() => openAdminTab("media")} type="button">
+                  <strong>素材库管理</strong>
+                  <span>像相册一样管理图片、视频、文件夹，上传后可在各模块复用。</span>
+                </button>
+                <button className="admin-entry-card" onClick={() => openAdminTab("gallery")} type="button">
+                  <strong>相册/图册展示</strong>
+                  <span>管理前台展示的图片和视频条目，并从素材库选择素材。</span>
+                </button>
+                <button className="admin-entry-card" onClick={() => openAdminTab("ai")} type="button">
+                  <strong>AI 配置与测试</strong>
+                  <span>配置模型、接口地址、提示词，并测试供应商是否能调用成功。</span>
+                </button>
+                <button className="admin-entry-card" onClick={() => openAdminTab("backup")} type="button">
+                  <strong>备份恢复</strong>
+                  <span>导出后台数据备份，或从备份文件恢复网站内容和素材索引。</span>
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {activeTab === "aiDraft" && pendingAiImport ? (
             <div className="card admin-panel">
               <div className="admin-toolbar">
                 <h3>AI 文案差异预览</h3>
@@ -1260,30 +1377,70 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             </div>
           ) : null}
 
-          <div className="card admin-panel">
-            <div className="admin-toolbar">
-              <h3>AI 改稿工作流</h3>
-              <div className="admin-entity-actions">
-                <button className="button secondary" onClick={handleCopyInstructions} type="button" disabled={copyingInstructions}>
-                  {copyingInstructions ? "复制中..." : "复制外部 AI 指令"}
-                </button>
-                <button className="button primary" onClick={handleGenerateAiSiteDraft} type="button" disabled={generatingAiSiteDraft}>
-                  {generatingAiSiteDraft ? "生成中..." : "让 AI 直接生成草稿"}
-                </button>
+          {activeTab === "aiDraft" ? (
+            <div className="card admin-panel">
+              <div className="admin-toolbar">
+                <h3>AI 改稿工作流</h3>
+                <div className="admin-entity-actions">
+                  <button className="button secondary" onClick={handleCopyInstructions} type="button" disabled={copyingInstructions}>
+                    {copyingInstructions ? "复制中..." : "复制外部 AI 指令"}
+                  </button>
+                  <button className="button primary" onClick={handleGenerateAiSiteDraft} type="button" disabled={generatingAiSiteDraft}>
+                    {generatingAiSiteDraft ? "生成中..." : "让 AI 直接生成草稿"}
+                  </button>
+                </div>
               </div>
+              <div className="entity-note">
+                可以继续用导出/导入文案包，也可以直接让后台调用已配置的 AI 生成草稿。AI 返回后会进入差异预览，你确认后才会应用到网站。
+              </div>
+              <label className="admin-field admin-full-span">
+                <span>直接发给网站 AI 的改版需求</span>
+                <textarea value={aiSiteInstruction} onChange={(event) => setAiSiteInstruction(event.target.value)} />
+              </label>
+              <div className="admin-subsection">
+                <div className="admin-toolbar">
+                  <h3>截图 + 描述改网站</h3>
+                  <button
+                    className="button primary"
+                    onClick={handleGenerateAiVisualDraft}
+                    type="button"
+                    disabled={generatingAiVisualDraft}
+                  >
+                    {generatingAiVisualDraft ? "识别中..." : "根据截图生成草稿"}
+                  </button>
+                </div>
+                <div className="entity-note">
+                  上传页面截图并说明要怎么改。需要使用支持图片输入的模型；如果当前模型不支持视觉，接口会返回失败，不会覆盖网站。
+                </div>
+                <div className="admin-grid">
+                  <label className="admin-field">
+                    <span>网站截图</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => setAiVisualScreenshot(event.target.files?.[0] ?? null)}
+                    />
+                  </label>
+                  <label className="admin-field admin-full-span">
+                    <span>截图修改需求</span>
+                    <textarea value={aiVisualInstruction} onChange={(event) => setAiVisualInstruction(event.target.value)} />
+                  </label>
+                </div>
+                {aiVisualScreenshotPreview ? (
+                  <div className="admin-visual-screenshot-preview">
+                    <img src={aiVisualScreenshotPreview} alt="待识别的网站截图" />
+                    <div className="entity-note">
+                      {aiVisualScreenshot?.name} · {Math.round((aiVisualScreenshot?.size ?? 0) / 1024)} KB
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              <label className="admin-field admin-full-span">
+                <span>发给外部 AI 的标准指令</span>
+                <textarea value={externalAiInstructions} readOnly />
+              </label>
             </div>
-            <div className="entity-note">
-              可以继续用导出/导入文案包，也可以直接让后台调用已配置的 AI 生成草稿。AI 返回后会进入差异预览，你确认后才会应用到网站。
-            </div>
-            <label className="admin-field admin-full-span">
-              <span>直接发给网站 AI 的改版需求</span>
-              <textarea value={aiSiteInstruction} onChange={(event) => setAiSiteInstruction(event.target.value)} />
-            </label>
-            <label className="admin-field admin-full-span">
-              <span>发给外部 AI 的标准指令</span>
-              <textarea value={externalAiInstructions} readOnly />
-            </label>
-          </div>
+          ) : null}
 
           {activeTab === "site" ? (
             <div className="card admin-panel">
@@ -2581,6 +2738,61 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
 
           {activeTab === "media" ? (
             <MediaLibraryManager library={mediaLibrary} adminToken={adminToken} onLibraryChange={setMediaLibrary} />
+          ) : null}
+
+          {activeTab === "backup" ? (
+            <div className="card admin-panel">
+              <div className="admin-toolbar">
+                <h2>备份恢复</h2>
+                <div className="admin-entity-actions">
+                  <button
+                    className="button secondary"
+                    onClick={handleBackupDownload}
+                    type="button"
+                    disabled={backingUp || restoring || exportingAiCopy || restoringAiCopy}
+                  >
+                    {backingUp ? "导出中..." : "导出后台备份"}
+                  </button>
+                  <button
+                    className="button secondary"
+                    onClick={() => backupFileInputRef.current?.click()}
+                    type="button"
+                    disabled={backingUp || restoring || exportingAiCopy || restoringAiCopy}
+                  >
+                    {restoring ? "恢复中..." : "从备份文件恢复"}
+                  </button>
+                </div>
+              </div>
+              <div className="entity-note">
+                后台备份用于迁移或回滚站点内容、配置、素材索引、聊天记录和上传文件。服务器整站全量备份仍由 yk 脚本负责。
+              </div>
+              <div className="admin-subsection">
+                <div className="admin-toolbar">
+                  <h3>AI 文案包</h3>
+                  <div className="admin-entity-actions">
+                    <button
+                      className="button secondary"
+                      onClick={handleAiCopyDownload}
+                      type="button"
+                      disabled={backingUp || restoring || exportingAiCopy || restoringAiCopy}
+                    >
+                      {exportingAiCopy ? "导出中..." : "导出 AI 文案包"}
+                    </button>
+                    <button
+                      className="button secondary"
+                      onClick={() => aiCopyFileInputRef.current?.click()}
+                      type="button"
+                      disabled={backingUp || restoring || exportingAiCopy || restoringAiCopy}
+                    >
+                      {restoringAiCopy ? "导入中..." : "导入 AI 文案包"}
+                    </button>
+                  </div>
+                </div>
+                <div className="entity-note">
+                  AI 文案包只服务于改稿流程，适合导出给外部 AI 或把外部 AI 改好的文案导回差异预览。
+                </div>
+              </div>
+            </div>
           ) : null}
 
           {activeTab === "pages" ? (

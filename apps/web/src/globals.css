@@ -1128,6 +1128,13 @@ h1, h2, h3, h4 {
   min-height: 46px;
 }
 
+.admin-nav-link {
+  display: flex;
+  align-items: center;
+  color: var(--text);
+  text-decoration: none;
+}
+
 .admin-nav-item.active {
   background: linear-gradient(135deg, var(--primary), #377dff);
   color: #fff;
@@ -1147,6 +1154,45 @@ h1, h2, h3, h4 {
 .admin-panel h2,
 .admin-toolbar h3 {
   margin-top: 0;
+}
+
+.admin-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-entry-card {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-height: 128px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.admin-entry-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(47, 120, 255, 0.36);
+  box-shadow: var(--shadow);
+}
+
+.admin-entry-card strong {
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.admin-entry-card span {
+  color: var(--muted);
+  line-height: 1.55;
 }
 
 .admin-subsection {
@@ -1225,6 +1271,22 @@ h1, h2, h3, h4 {
   font-size: 13px;
   font-weight: 700;
   color: var(--muted);
+}
+
+.admin-visual-screenshot-preview {
+  margin-top: 14px;
+  display: grid;
+  gap: 8px;
+}
+
+.admin-visual-screenshot-preview img {
+  width: min(520px, 100%);
+  max-height: 320px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #f8fafc;
+  box-shadow: var(--shadow-sm);
 }
 
 .admin-field input,
@@ -2034,6 +2096,10 @@ h1, h2, h3, h4 {
   }
 
   .admin-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-entry-grid {
     grid-template-columns: 1fr;
   }
 

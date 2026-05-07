@@ -151,8 +151,8 @@ function createAdminHeaders(token: string, extra?: HeadersInit) {
 }
 
 async function parseErrorMessage(response: Response, fallback: string) {
-  const errorPayload = (await response.json().catch(() => null)) as { error?: string } | null;
-  return errorPayload?.error || fallback;
+  const errorPayload = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
+  return errorPayload?.message || errorPayload?.error || fallback;
 }
 
 function getUploadErrorMessage(
@@ -536,6 +536,36 @@ export async function generateAiSiteDraft(payload: { instruction: string; langua
 
   if (!response.ok) {
     throw new Error(await parseErrorMessage(response, "generate_ai_site_draft_failed"));
+  }
+
+  return (await response.json()) as {
+    ok: true;
+    content: CmsContent;
+    notes: string[];
+  };
+}
+
+export async function generateAiVisualSiteDraft(
+  payload: {
+    instruction: string;
+    language: Language;
+    screenshot: File;
+  },
+  token: string,
+) {
+  const formData = new FormData();
+  formData.set("instruction", payload.instruction);
+  formData.set("language", payload.language);
+  formData.set("screenshot", payload.screenshot);
+
+  const response = await fetchWithFallback("/api/admin/ai/visual-site-draft", {
+    method: "POST",
+    headers: createAdminHeaders(token),
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "generate_ai_visual_site_draft_failed"));
   }
 
   return (await response.json()) as {

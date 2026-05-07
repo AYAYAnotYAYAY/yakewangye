@@ -19,6 +19,12 @@ type WebsiteDraftResult = {
   notes: string[];
 };
 
+type VisualInput = {
+  dataUrl: string;
+  mimeType: string;
+  fileName: string;
+};
+
 const aiDraftSchema = z.object({
   notes: z.array(z.string()).default([]),
   changes: z
@@ -439,6 +445,24 @@ function buildAiPrompt(params: {
   ].join("\n");
 }
 
+function buildVisualAiPrompt(params: {
+  content: CmsContent;
+  mediaLibrary: MediaLibraryState;
+  instruction: string;
+  language: Language;
+  screenshot: VisualInput;
+}) {
+  return [
+    buildAiPrompt(params),
+    "",
+    "额外视觉任务：",
+    `管理员上传了一张网站截图：${params.screenshot.fileName} (${params.screenshot.mimeType})。`,
+    "请先根据截图理解管理员指的是页面哪个区域，再结合 allowedUpdates 输出改动草稿。",
+    "如果截图中的需求无法映射到 allowedUpdates，请在 notes 里说明原因，不要编造 path。",
+    "不要输出坐标，不要描述截图本身，最终仍然只返回 JSON。",
+  ].join("\n");
+}
+
 function createMockDraft(params: {
   content: CmsContent;
   mediaLibrary: MediaLibraryState;
@@ -489,6 +513,25 @@ function createMockDraft(params: {
   };
 }
 
+function createMockVisualDraft(params: {
+  content: CmsContent;
+  mediaLibrary: MediaLibraryState;
+  instruction: string;
+  language: Language;
+  screenshot: VisualInput;
+}): WebsiteDraftResult {
+  const draft = createMockDraft(params);
+
+  return {
+    content: draft.content,
+    notes: [
+      "当前 AI 配置未接入真实视觉模型，已生成一份本地演示草稿。",
+      `已收到截图：${params.screenshot.fileName}`,
+      ...draft.notes.slice(1),
+    ],
+  };
+}
+
 function normalizeResponsesEndpoint(endpoint: string) {
   return endpoint.trim().replace(/\/chat\/completions\/?$/, "/responses");
 }
@@ -517,7 +560,8 @@ async function postAiJson(params: {
   }
 
   if (!response.ok) {
-    throw new Error(`AI provider error: ${response.status}`);
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`AI provider error: ${response.status}${errorText ? ` ${errorText.slice(0, 600)}` : ""}`);
   }
 
   return response.json() as Promise<unknown>;
@@ -589,6 +633,48 @@ async function callChatDraft(config: AiConfig, prompt: string) {
   return extractChatText(payload);
 }
 
+async function callChatVisualDraft(config: AiConfig, prompt: string, screenshot: VisualInput) {
+  const body = {
+    model: config.model,
+    temperature: Math.min(config.temperature, 0.7),
+    max_tokens: Math.max(config.maxTokens, 4096),
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: "你是网站 CMS 视觉改版助手。只返回 JSON。",
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: prompt,
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: screenshot.dataUrl,
+            },
+          },
+        ],
+      },
+    ],
+  };
+  const fallbackBody = {
+    ...body,
+    response_format: undefined,
+  };
+  const payload = await postAiJson({
+    endpoint: config.endpoint,
+    apiKey: config.apiKey,
+    body,
+    fallbackBody,
+  });
+
+  return extractChatText(payload);
+}
+
 async function callResponsesDraft(config: AiConfig, prompt: string) {
   const body = {
     model: config.model,
@@ -596,6 +682,47 @@ async function callResponsesDraft(config: AiConfig, prompt: string) {
     max_output_tokens: Math.max(config.maxTokens, 4096),
     instructions: "你是网站 CMS 改版助手。只返回 JSON。",
     input: prompt,
+    text: {
+      format: {
+        type: "json_object",
+      },
+    },
+  };
+  const fallbackBody = {
+    ...body,
+    text: undefined,
+  };
+  const payload = await postAiJson({
+    endpoint: normalizeResponsesEndpoint(config.endpoint),
+    apiKey: config.apiKey,
+    body,
+    fallbackBody,
+  });
+
+  return extractResponsesText(payload);
+}
+
+async function callResponsesVisualDraft(config: AiConfig, prompt: string, screenshot: VisualInput) {
+  const body = {
+    model: config.model,
+    temperature: Math.min(config.temperature, 0.7),
+    max_output_tokens: Math.max(config.maxTokens, 4096),
+    instructions: "你是网站 CMS 视觉改版助手。只返回 JSON。",
+    input: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: prompt,
+          },
+          {
+            type: "input_image",
+            image_url: screenshot.dataUrl,
+          },
+        ],
+      },
+    ],
     text: {
       format: {
         type: "json_object",
@@ -645,6 +772,40 @@ export async function generateWebsiteDraft(params: {
     notes: [
       ...parsed.notes,
       `AI 返回 ${parsed.changes.length} 项改动，实际应用 ${applied.appliedPaths.length} 项白名单改动。`,
+    ],
+  };
+}
+
+export async function generateVisualWebsiteDraft(params: {
+  config: AiConfig;
+  content: CmsContent;
+  mediaLibrary: MediaLibraryState;
+  instruction: string;
+  language: Language;
+  screenshot: VisualInput;
+}): Promise<WebsiteDraftResult> {
+  if (params.config.provider === "mock" || !params.config.apiKey.trim()) {
+    return createMockVisualDraft(params);
+  }
+
+  const prompt = buildVisualAiPrompt(params);
+  const raw =
+    params.config.provider === "openai_responses"
+      ? await callResponsesVisualDraft(params.config, prompt, params.screenshot)
+      : await callChatVisualDraft(params.config, prompt, params.screenshot);
+  const parsed = parseAiDraftPayload(raw);
+  const applied = applyChanges({
+    content: params.content,
+    language: params.language,
+    changes: parsed.changes,
+    mediaLibrary: params.mediaLibrary,
+  });
+
+  return {
+    content: applied.content,
+    notes: [
+      ...parsed.notes,
+      `AI 根据截图返回 ${parsed.changes.length} 项改动，实际应用 ${applied.appliedPaths.length} 项白名单改动。`,
     ],
   };
 }

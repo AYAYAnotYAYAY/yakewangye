@@ -17,7 +17,7 @@ import {
   validateAdminCredentials,
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
-import { generateWebsiteDraft } from "../../lib/admin-ai-gateway";
+import { generateVisualWebsiteDraft, generateWebsiteDraft } from "../../lib/admin-ai-gateway";
 import { testAiProviderConnection } from "../../lib/ai-gateway";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
 import {
@@ -75,6 +75,8 @@ const aiWebsiteDraftSchema = z.object({
 const aiConfigTestSchema = z.object({
   config: aiConfigSchema,
 });
+
+const VISUAL_AI_MAX_SCREENSHOT_BYTES = Math.max(1, Number(process.env.VISUAL_AI_MAX_SCREENSHOT_MB ?? 8) || 8) * 1024 * 1024;
 
 const supportedImageExtensions = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".heic", ".heif"]);
 const supportedVideoExtensions = new Set([".mp4", ".mov", ".m4v", ".webm", ".ogg", ".ogv"]);
@@ -147,6 +149,65 @@ function parseUploadSessionId(request: FastifyRequest) {
   }
 
   return params.uploadId.trim();
+}
+
+function normalizeMultipartFieldValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (Buffer.isBuffer(value)) {
+    return value.toString("utf8");
+  }
+
+  if (value && typeof value === "object" && "value" in value) {
+    const nestedValue = (value as { value?: unknown }).value;
+    return typeof nestedValue === "string" ? nestedValue : String(nestedValue ?? "");
+  }
+
+  return "";
+}
+
+async function readVisualDraftPayload(request: FastifyRequest) {
+  const file = await request.file();
+
+  if (!file) {
+    throw new Error("screenshot_required");
+  }
+
+  const mimeType = file.mimetype.trim().toLowerCase();
+
+  if (!mimeType.startsWith("image/")) {
+    throw new Error("screenshot_must_be_image");
+  }
+
+  const buffer = await file.toBuffer();
+
+  if (buffer.byteLength > VISUAL_AI_MAX_SCREENSHOT_BYTES) {
+    throw new Error("screenshot_too_large");
+  }
+
+  const fields = file.fields as Record<string, unknown>;
+  const instruction = normalizeMultipartFieldValue(fields.instruction).trim();
+  const language = normalizeMultipartFieldValue(fields.language).trim();
+
+  if (!instruction) {
+    throw new Error("instruction_required");
+  }
+
+  if (!["zh", "ru", "en"].includes(language)) {
+    throw new Error("invalid_language");
+  }
+
+  return {
+    instruction,
+    language: language as "zh" | "ru" | "en",
+    screenshot: {
+      fileName: file.filename || "screenshot",
+      mimeType,
+      dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+    },
+  };
 }
 
 async function saveUpload(file: MultipartFile, folderPath = "") {
@@ -460,6 +521,50 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       content: result.content,
       notes: result.notes,
     };
+  });
+
+  app.post("/api/admin/ai/visual-site-draft", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    let payload: Awaited<ReturnType<typeof readVisualDraftPayload>>;
+
+    try {
+      payload = await readVisualDraftPayload(request);
+    } catch (error) {
+      return reply.status(400).send({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    try {
+      const content = await readContent();
+      const library = await mediaLibraryRepository.getState();
+      const result = await generateVisualWebsiteDraft({
+        config: content.aiConfig,
+        content,
+        mediaLibrary: library,
+        instruction: payload.instruction,
+        language: payload.language,
+        screenshot: payload.screenshot,
+      });
+
+      return {
+        ok: true,
+        content: result.content,
+        notes: result.notes,
+      };
+    } catch (error) {
+      return reply.status(502).send({
+        ok: false,
+        error: "visual_ai_draft_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   app.post("/api/admin/ai/test", async (request, reply) => {
