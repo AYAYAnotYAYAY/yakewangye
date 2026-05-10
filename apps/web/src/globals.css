@@ -1276,17 +1276,111 @@ h1, h2, h3, h4 {
 .admin-visual-screenshot-preview {
   margin-top: 14px;
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.admin-visual-screenshot-item {
+  display: grid;
   gap: 8px;
 }
 
 .admin-visual-screenshot-preview img {
-  width: min(520px, 100%);
+  width: 100%;
   max-height: 320px;
   object-fit: contain;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: #f8fafc;
   box-shadow: var(--shadow-sm);
+}
+
+.admin-log-summary-grid,
+.admin-log-columns {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.admin-log-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-log-metric {
+  padding: 16px;
+  display: grid;
+  gap: 6px;
+}
+
+.admin-log-metric span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.admin-log-metric strong {
+  font-size: 26px;
+  line-height: 1.2;
+}
+
+.admin-log-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-log-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.admin-log-row span {
+  overflow-wrap: anywhere;
+}
+
+.admin-log-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.admin-log-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.admin-log-table th,
+.admin-log-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-log-table th {
+  color: var(--muted);
+  font-weight: 800;
+  background: #f8fafc;
+}
+
+.admin-log-table td strong,
+.admin-log-table td span {
+  display: block;
+  max-width: 240px;
+  overflow-wrap: anywhere;
+}
+
+.admin-log-table td span {
+  color: var(--muted);
+  margin-top: 4px;
 }
 
 .admin-field input,
@@ -2100,6 +2194,11 @@ h1, h2, h3, h4 {
   }
 
   .admin-entry-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-log-summary-grid,
+  .admin-log-columns {
     grid-template-columns: 1fr;
   }
 

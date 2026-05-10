@@ -15,6 +15,7 @@ const dataRoot = resolveLocalDataRoot();
 const legacyContentFilePath = path.resolve(repoRoot, "data/content.json");
 const legacyChatSessionsFilePath = path.resolve(repoRoot, "data/chat-sessions.json");
 const legacyAdminConfigFilePath = path.resolve(repoRoot, "data/admin-config.json");
+const legacyVisitorLogsFilePath = path.resolve(repoRoot, "data/visitor-logs.json");
 const legacyUploadsDir = path.resolve(repoRoot, "apps/api/uploads");
 
 const videoExtensions = new Set([".mp4", ".mov", ".m4v", ".webm", ".ogg", ".ogv"]);
@@ -66,6 +67,7 @@ export function getLocalStoragePaths() {
     dataRoot,
     contentFilePath: path.resolve(dataRoot, "content.json"),
     chatSessionsFilePath: path.resolve(dataRoot, "chat-sessions.json"),
+    visitorLogsFilePath: path.resolve(dataRoot, "visitor-logs.json"),
     adminConfigFilePath: path.resolve(dataRoot, "admin-config.json"),
     mediaLibraryFilePath: path.resolve(dataRoot, "media-library.json"),
     uploadsDir: path.resolve(dataRoot, "uploads"),
@@ -73,6 +75,7 @@ export function getLocalStoragePaths() {
     uploadTempDir: path.resolve(dataRoot, "upload-temp"),
     legacyContentFilePath,
     legacyChatSessionsFilePath,
+    legacyVisitorLogsFilePath,
     legacyAdminConfigFilePath,
     legacyUploadsDir,
   };
@@ -213,6 +216,16 @@ export async function ensureChatStorage() {
   return chatSessionsFilePath;
 }
 
+export async function ensureVisitorLogStorage() {
+  const { visitorLogsFilePath } = getLocalStoragePaths();
+  await ensureJsonFile({
+    filePath: visitorLogsFilePath,
+    legacyFilePath: legacyVisitorLogsFilePath,
+    fallbackJson: "[]",
+  });
+  return visitorLogsFilePath;
+}
+
 export async function ensureAdminStorage() {
   const { adminConfigFilePath } = getLocalStoragePaths();
   await mkdir(path.dirname(adminConfigFilePath), { recursive: true });
@@ -242,6 +255,7 @@ export async function ensureAllLocalStorage() {
   await ensureUploadSessionStorage();
   await ensureContentStorage();
   await ensureChatStorage();
+  await ensureVisitorLogStorage();
   await ensureAdminStorage();
   await ensureMediaLibraryStorage();
 }

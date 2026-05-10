@@ -6,10 +6,12 @@ import {
   cmsContentSchema,
   cmsContentSeed,
   mediaLibraryStateSchema,
+  visitorLogEventSchema,
   type ChatSession,
+  type VisitorLogEvent,
 } from "@quanyu/shared";
 import { z } from "zod";
-import { ensureAdminStorage, ensureChatStorage, ensureContentStorage, ensureMediaLibraryStorage, ensureUploadsStorage, getLocalStoragePaths } from "./storage-paths";
+import { ensureAdminStorage, ensureChatStorage, ensureContentStorage, ensureMediaLibraryStorage, ensureUploadsStorage, ensureVisitorLogStorage, getLocalStoragePaths } from "./storage-paths";
 
 const BACKUP_FORMAT = "quanyu.admin.backup";
 const BACKUP_VERSION = 1;
@@ -47,6 +49,7 @@ const backupBundleSchema = z.object({
     galleryCount: z.number().int().nonnegative(),
     pageCount: z.number().int().nonnegative(),
     chatSessionCount: z.number().int().nonnegative(),
+    visitorLogCount: z.number().int().nonnegative().default(0),
     mediaAssetCount: z.number().int().nonnegative(),
     mediaFolderCount: z.number().int().nonnegative(),
     uploadFileCount: z.number().int().nonnegative(),
@@ -55,6 +58,7 @@ const backupBundleSchema = z.object({
     content: cmsContentSchema,
     adminConfig: adminConfigSchema.nullable(),
     chatSessions: z.array(chatSessionSchema),
+    visitorLogs: z.array(visitorLogEventSchema).default([]),
     mediaLibrary: mediaLibraryStateSchema,
   }),
   uploads: z.object({
@@ -451,14 +455,16 @@ export async function createBackupBundle(): Promise<BackupBundle> {
   const paths = getLocalStoragePaths();
   await ensureContentStorage();
   await ensureChatStorage();
+  await ensureVisitorLogStorage();
   await ensureAdminStorage();
   await ensureMediaLibraryStorage();
   await ensureUploadsStorage();
 
-  const [content, adminConfig, chatSessions, mediaLibrary, uploadFiles] = await Promise.all([
+  const [content, adminConfig, chatSessions, visitorLogs, mediaLibrary, uploadFiles] = await Promise.all([
     readJsonFile(paths.contentFilePath, cmsContentSchema, cmsContentSeed),
     readAdminConfig(),
     readJsonFile(paths.chatSessionsFilePath, z.array(chatSessionSchema), [] as ChatSession[]),
+    readJsonFile(paths.visitorLogsFilePath, z.array(visitorLogEventSchema), [] as VisitorLogEvent[]),
     readJsonFile(paths.mediaLibraryFilePath, mediaLibraryStateSchema, mediaLibraryStateSchema.parse({ folders: [], assets: [] })),
     listUploadFiles(paths.uploadsDir),
   ]);
@@ -480,6 +486,7 @@ export async function createBackupBundle(): Promise<BackupBundle> {
       galleryCount: content.gallery.length,
       pageCount: content.pages.length,
       chatSessionCount: chatSessions.length,
+      visitorLogCount: visitorLogs.length,
       mediaAssetCount: mediaLibrary.assets.length,
       mediaFolderCount: mediaLibrary.folders.length,
       uploadFileCount: uploadFiles.length,
@@ -488,6 +495,7 @@ export async function createBackupBundle(): Promise<BackupBundle> {
       content: contentWithI18n,
       adminConfig,
       chatSessions,
+      visitorLogs,
       mediaLibrary,
     },
     uploads: {
@@ -527,6 +535,7 @@ export async function restoreBackupBundle(rawInput: string | Buffer) {
 
   await writeBackupJsonFile(paths.contentFilePath, bundle.data.content);
   await writeBackupJsonFile(paths.chatSessionsFilePath, bundle.data.chatSessions);
+  await writeBackupJsonFile(paths.visitorLogsFilePath, bundle.data.visitorLogs);
   await writeBackupJsonFile(paths.mediaLibraryFilePath, bundle.data.mediaLibrary);
 
   if (bundle.data.adminConfig) {

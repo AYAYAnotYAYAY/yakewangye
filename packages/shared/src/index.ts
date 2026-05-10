@@ -202,6 +202,25 @@ export const mediaLibraryAssetSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   source: z.enum(["upload", "import", "copy"]),
+  aiAnalysis: z
+    .object({
+      status: z.enum(["ready", "metadata_only", "failed"]),
+      language: languageSchema,
+      summary: z.string(),
+      visualDescription: z.string(),
+      tags: z.array(z.string()),
+      suggestedUseCases: z.array(z.string()),
+      unsuitableUseCases: z.array(z.string()),
+      placementSuggestions: z.array(z.string()),
+      dentalRelevance: z.string(),
+      patientFacingCaption: z.string(),
+      safetyNotes: z.array(z.string()),
+      analyzedAt: z.string(),
+      model: z.string(),
+      source: z.enum(["vision", "metadata"]),
+      error: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const mediaLibraryAssetListSchema = z.array(mediaLibraryAssetSchema);
@@ -276,6 +295,62 @@ export const chatSessionSchema = z.object({
   messages: z.array(chatMessageRecordSchema),
 });
 
+export const visitorLogEventSchema = z.object({
+  id: z.string(),
+  sessionId: z.string(),
+  visitorId: z.string(),
+  eventName: z.string(),
+  pageUrl: z.string(),
+  pagePath: z.string(),
+  pageTitle: z.string().optional(),
+  referrer: z.string().optional(),
+  searchEngine: z.string().optional(),
+  dwellTimeMs: z.number().int().nonnegative().optional(),
+  language: languageSchema.optional(),
+  ip: z.string(),
+  country: z.string().optional(),
+  region: z.string().optional(),
+  city: z.string().optional(),
+  userAgent: z.string(),
+  deviceType: z.string(),
+  os: z.string(),
+  browser: z.string(),
+  viewport: z
+    .object({
+      width: z.number().int().nonnegative(),
+      height: z.number().int().nonnegative(),
+    })
+    .optional(),
+  screen: z
+    .object({
+      width: z.number().int().nonnegative(),
+      height: z.number().int().nonnegative(),
+    })
+    .optional(),
+  timezone: z.string().optional(),
+  createdAt: z.string(),
+  extra: z.record(z.unknown()).optional(),
+});
+
+export const visitorLogSummarySchema = z.object({
+  totalEvents: z.number().int().nonnegative(),
+  totalVisitors: z.number().int().nonnegative(),
+  totalSessions: z.number().int().nonnegative(),
+  pageViews: z.number().int().nonnegative(),
+  averageDwellSec: z.number().nonnegative(),
+  mobileSessions: z.number().int().nonnegative(),
+  desktopSessions: z.number().int().nonnegative(),
+  tabletSessions: z.number().int().nonnegative(),
+});
+
+export const visitorLogDashboardSchema = z.object({
+  summary: visitorLogSummarySchema,
+  topPages: z.array(z.object({ pagePath: z.string(), views: z.number().int().nonnegative() })),
+  topReferrers: z.array(z.object({ referrer: z.string(), visits: z.number().int().nonnegative() })),
+  topBrowsers: z.array(z.object({ browser: z.string(), sessions: z.number().int().nonnegative() })),
+  recentEvents: z.array(visitorLogEventSchema),
+});
+
 export const cmsContentSchema = z.object({
   siteSettings: siteSettingsSchema,
   homePage: pageSchema,
@@ -320,6 +395,8 @@ export type TelegramConfig = z.infer<typeof telegramConfigSchema>;
 export type ChatMessageRecord = z.infer<typeof chatMessageRecordSchema>;
 export type TriageResult = z.infer<typeof triageResultSchema>;
 export type ChatSession = z.infer<typeof chatSessionSchema>;
+export type VisitorLogEvent = z.infer<typeof visitorLogEventSchema>;
+export type VisitorLogDashboard = z.infer<typeof visitorLogDashboardSchema>;
 export type CmsContent = z.infer<typeof cmsContentSchema>;
 
 export const siteMetadata = {

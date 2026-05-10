@@ -4,6 +4,7 @@ import {
   type AiConfig,
   type CmsContent,
   type Language,
+  type MediaLibraryAsset,
   type MediaLibraryState,
 } from "@quanyu/shared";
 
@@ -37,6 +38,25 @@ const aiDraftSchema = z.object({
     .max(120)
     .default([]),
 });
+
+const mediaAssetAnalysisSchema = z.object({
+  summary: z.string().default(""),
+  visualDescription: z.string().default(""),
+  tags: z.array(z.string()).default([]),
+  suggestedUseCases: z.array(z.string()).default([]),
+  unsuitableUseCases: z.array(z.string()).default([]),
+  placementSuggestions: z.array(z.string()).default([]),
+  dentalRelevance: z.string().default(""),
+  patientFacingCaption: z.string().default(""),
+  safetyNotes: z.array(z.string()).default([]),
+});
+
+type MediaAnalysisInput = {
+  asset: MediaLibraryAsset;
+  config: AiConfig;
+  language: Language;
+  dataUrl?: string;
+};
 
 function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -342,6 +362,7 @@ function applyChanges(params: {
   const allowedUpdates = buildAllowedUpdates(localizedContent);
   const allowedByPath = new Map(allowedUpdates.map((update) => [update.path, update]));
   const mediaUrls = new Set(params.mediaLibrary.assets.map((asset) => asset.url));
+  const mediaAssetByUrl = new Map(params.mediaLibrary.assets.map((asset) => [asset.url, asset]));
   const appliedPaths: string[] = [];
 
   const next = updateLocalizedContentDraft(params.content, params.language, (current) => {
@@ -361,6 +382,12 @@ function applyChanges(params: {
       }
 
       setPathValue(working, change.path, nextValue);
+      if (update.kind === "media_url" && change.path.match(/^gallery\.\d+\.imageUrl$/)) {
+        const asset = mediaAssetByUrl.get(nextValue);
+        if (asset) {
+          setPathValue(working, change.path.replace(/\.imageUrl$/, ".mediaType"), asset.mediaType);
+        }
+      }
       appliedPaths.push(change.path);
     }
 
@@ -409,6 +436,14 @@ function buildAiPrompt(params: {
     url: asset.url,
     mediaType: asset.mediaType,
     folderPath: asset.folderPath,
+    aiSummary: asset.aiAnalysis?.summary,
+    visualDescription: asset.aiAnalysis?.visualDescription,
+    tags: asset.aiAnalysis?.tags,
+    suggestedUseCases: asset.aiAnalysis?.suggestedUseCases,
+    unsuitableUseCases: asset.aiAnalysis?.unsuitableUseCases,
+    placementSuggestions: asset.aiAnalysis?.placementSuggestions,
+    patientFacingCaption: asset.aiAnalysis?.patientFacingCaption,
+    analysisStatus: asset.aiAnalysis?.status,
   }));
 
   return [
@@ -418,9 +453,10 @@ function buildAiPrompt(params: {
     "1. 只允许修改 allowedUpdates 中列出的 path。",
     "2. 不允许修改 id、slug、href、电话、地址、Telegram、AI 配置、API Key、模型配置。",
     "3. 不允许编造医生资历、价格承诺、治疗效果、法律承诺。",
-    "4. 可以改写文案、SEO、服务介绍、流程表达，也可以从 mediaAssets 中选择合适素材 URL 填到 media 类型 path。",
-    "5. media 类型 path 的 value 只能使用 mediaAssets 里已有的 url，不要编造外链。",
+    "4. 可以改写文案、SEO、服务介绍、流程表达，也可以根据 mediaAssets 的 aiSummary/tags/suggestedUseCases 选择合适素材 URL 填到 media 类型 path。",
+    "5. media 类型 path 的 value 只能使用 mediaAssets 里已有的 url，不要编造外链。医生头像、服务图、文章封面优先用图片；图册素材可以用图片或视频。",
     "6. 输出语言必须匹配 language。",
+    "7. 如果素材没有 aiSummary，说明还没有做 AI 素材分析，优先使用已有分析结果的素材。",
     "",
     `language: ${params.language}`,
     `管理员需求: ${params.instruction}`,
@@ -450,15 +486,17 @@ function buildVisualAiPrompt(params: {
   mediaLibrary: MediaLibraryState;
   instruction: string;
   language: Language;
-  screenshot: VisualInput;
+  screenshots: VisualInput[];
 }) {
   return [
     buildAiPrompt(params),
     "",
     "额外视觉任务：",
-    `管理员上传了一张网站截图：${params.screenshot.fileName} (${params.screenshot.mimeType})。`,
-    "请先根据截图理解管理员指的是页面哪个区域，再结合 allowedUpdates 输出改动草稿。",
-    "如果截图中的需求无法映射到 allowedUpdates，请在 notes 里说明原因，不要编造 path。",
+    params.screenshots.length
+      ? `管理员上传了 ${params.screenshots.length} 张网站截图：${params.screenshots.map((item) => `${item.fileName} (${item.mimeType})`).join("；")}。`
+      : "管理员没有上传截图，本次只根据文字描述、当前 CMS 内容和素材库生成改动草稿。",
+    "如果有截图，请先根据截图理解管理员指的是页面哪个区域，再结合 allowedUpdates 输出改动草稿。",
+    "如果需求无法映射到 allowedUpdates，请在 notes 里说明原因，不要编造 path。",
     "不要输出坐标，不要描述截图本身，最终仍然只返回 JSON。",
   ].join("\n");
 }
@@ -518,18 +556,79 @@ function createMockVisualDraft(params: {
   mediaLibrary: MediaLibraryState;
   instruction: string;
   language: Language;
-  screenshot: VisualInput;
+  screenshots: VisualInput[];
 }): WebsiteDraftResult {
   const draft = createMockDraft(params);
 
   return {
     content: draft.content,
     notes: [
-      "当前 AI 配置未接入真实视觉模型，已生成一份本地演示草稿。",
-      `已收到截图：${params.screenshot.fileName}`,
+      params.screenshots.length
+        ? "当前 AI 配置未接入真实视觉模型，已根据多图任务生成一份本地演示草稿。"
+        : "当前 AI 配置未接入真实模型，已根据文字描述生成一份本地演示草稿。",
+      params.screenshots.length ? `已收到截图：${params.screenshots.map((item) => item.fileName).join("、")}` : "本次未上传截图。",
       ...draft.notes.slice(1),
     ],
   };
+}
+
+function stripMarkdownJson(input: string) {
+  const trimmed = input.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1].trim() : trimmed;
+}
+
+function parseMediaAnalysisPayload(raw: string) {
+  const stripped = stripMarkdownJson(raw);
+
+  try {
+    return mediaAssetAnalysisSchema.parse(JSON.parse(stripped));
+  } catch {
+    const firstBrace = stripped.indexOf("{");
+    const lastBrace = stripped.lastIndexOf("}");
+
+    if (firstBrace < 0 || lastBrace <= firstBrace) {
+      throw new Error("invalid_media_analysis_response");
+    }
+
+    return mediaAssetAnalysisSchema.parse(JSON.parse(stripped.slice(firstBrace, lastBrace + 1)));
+  }
+}
+
+function buildMediaAssetAnalysisPrompt(params: MediaAnalysisInput) {
+  const { asset, language, dataUrl } = params;
+  const canSeeMedia = Boolean(dataUrl && asset.mediaType === "image");
+
+  return [
+    "你是牙科门诊网站素材库分析助手。你要为每个图片/视频写出方便网站 AI 后续自动排版和选素材的结构化描述。",
+    "只返回 JSON，不要 Markdown。",
+    "必须围绕牙科门诊官网、线上问诊、跨境就诊、医院环境、住宿/路线/翻译服务这些场景判断素材用途。",
+    "不要编造医学效果、医生资质、具体治疗承诺。如果看不清或只是文件名推断，要在 safetyNotes 里说明。",
+    "",
+    `language: ${language}`,
+    `mediaType: ${asset.mediaType}`,
+    `title: ${asset.title}`,
+    `fileName: ${asset.fileName}`,
+    `folderPath: ${asset.folderPath || "/"}`,
+    `mimeType: ${asset.mimeType}`,
+    `url: ${asset.url}`,
+    canSeeMedia
+      ? "你可以看到这张图片，请根据实际视觉内容描述。"
+      : "你不能逐帧观看这个视频/文件，只能基于标题、文件名、文件夹和上下文生成 metadata_only 分析；不要假装已经看过画面。",
+    "",
+    "返回 JSON 格式：",
+    JSON.stringify({
+      summary: "一句话概括素材",
+      visualDescription: "详细描述画面或 metadata_only 判断依据",
+      tags: ["牙科", "环境", "设备"],
+      suggestedUseCases: ["适合放在首页图册", "适合服务项目封面"],
+      unsuitableUseCases: ["不适合医生头像"],
+      placementSuggestions: ["homePage.sections.gallery.items.0.cover", "gallery.imageUrl"],
+      dentalRelevance: "和牙科/门诊/就诊服务的关联度说明",
+      patientFacingCaption: "可直接给访客看的简短说明",
+      safetyNotes: ["如果内容不明确，在这里写限制"],
+    }),
+  ].join("\n");
 }
 
 function normalizeResponsesEndpoint(endpoint: string) {
@@ -633,7 +732,7 @@ async function callChatDraft(config: AiConfig, prompt: string) {
   return extractChatText(payload);
 }
 
-async function callChatVisualDraft(config: AiConfig, prompt: string, screenshot: VisualInput) {
+async function callChatVisualDraft(config: AiConfig, prompt: string, screenshots: VisualInput[]) {
   const body = {
     model: config.model,
     temperature: Math.min(config.temperature, 0.7),
@@ -651,12 +750,12 @@ async function callChatVisualDraft(config: AiConfig, prompt: string, screenshot:
             type: "text",
             text: prompt,
           },
-          {
+          ...screenshots.map((screenshot) => ({
             type: "image_url",
             image_url: {
               url: screenshot.dataUrl,
             },
-          },
+          })),
         ],
       },
     ],
@@ -702,7 +801,7 @@ async function callResponsesDraft(config: AiConfig, prompt: string) {
   return extractResponsesText(payload);
 }
 
-async function callResponsesVisualDraft(config: AiConfig, prompt: string, screenshot: VisualInput) {
+async function callResponsesVisualDraft(config: AiConfig, prompt: string, screenshots: VisualInput[]) {
   const body = {
     model: config.model,
     temperature: Math.min(config.temperature, 0.7),
@@ -716,10 +815,10 @@ async function callResponsesVisualDraft(config: AiConfig, prompt: string, screen
             type: "input_text",
             text: prompt,
           },
-          {
+          ...screenshots.map((screenshot) => ({
             type: "input_image",
             image_url: screenshot.dataUrl,
-          },
+          })),
         ],
       },
     ],
@@ -741,6 +840,136 @@ async function callResponsesVisualDraft(config: AiConfig, prompt: string, screen
   });
 
   return extractResponsesText(payload);
+}
+
+async function callChatMediaAnalysis(config: AiConfig, prompt: string, dataUrl?: string) {
+  const content = dataUrl
+    ? [
+        {
+          type: "text",
+          text: prompt,
+        },
+        {
+          type: "image_url",
+          image_url: {
+            url: dataUrl,
+          },
+        },
+      ]
+    : prompt;
+  const body = {
+    model: config.model,
+    temperature: Math.min(config.temperature, 0.4),
+    max_tokens: Math.max(config.maxTokens, 1200),
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: "你是网站素材库 AI 分析助手。只返回 JSON。",
+      },
+      {
+        role: "user",
+        content,
+      },
+    ],
+  };
+  const fallbackBody = {
+    ...body,
+    response_format: undefined,
+  };
+  const payload = await postAiJson({
+    endpoint: config.endpoint,
+    apiKey: config.apiKey,
+    body,
+    fallbackBody,
+  });
+
+  return extractChatText(payload);
+}
+
+async function callResponsesMediaAnalysis(config: AiConfig, prompt: string, dataUrl?: string) {
+  const body = {
+    model: config.model,
+    temperature: Math.min(config.temperature, 0.4),
+    max_output_tokens: Math.max(config.maxTokens, 1200),
+    instructions: "你是网站素材库 AI 分析助手。只返回 JSON。",
+    input: dataUrl
+      ? [
+          {
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: prompt,
+              },
+              {
+                type: "input_image",
+                image_url: dataUrl,
+              },
+            ],
+          },
+        ]
+      : prompt,
+    text: {
+      format: {
+        type: "json_object",
+      },
+    },
+  };
+  const fallbackBody = {
+    ...body,
+    text: undefined,
+  };
+  const payload = await postAiJson({
+    endpoint: normalizeResponsesEndpoint(config.endpoint),
+    apiKey: config.apiKey,
+    body,
+    fallbackBody,
+  });
+
+  return extractResponsesText(payload);
+}
+
+export async function analyzeMediaAsset(params: MediaAnalysisInput): Promise<NonNullable<MediaLibraryAsset["aiAnalysis"]>> {
+  const isVisionAnalysis = Boolean(params.dataUrl && params.asset.mediaType === "image");
+
+  if (params.config.provider === "mock" || !params.config.apiKey.trim()) {
+    return {
+      status: isVisionAnalysis ? "ready" : "metadata_only",
+      language: params.language,
+      summary: `${params.asset.title} 可作为网站素材使用。`,
+      visualDescription:
+        params.asset.mediaType === "video"
+          ? "当前未接入视频逐帧识别，已根据文件名、标题和文件夹生成素材建议。"
+          : "当前 AI 配置未接入真实视觉模型，已生成本地演示描述。",
+      tags: [params.asset.mediaType === "video" ? "视频" : "图片", "牙科", "素材"],
+      suggestedUseCases: ["可用于首页图册、图册视频列表或相关服务模块。"],
+      unsuitableUseCases: ["不建议用于无法对应内容的医生头像或具体治疗效果证明。"],
+      placementSuggestions: ["homePage.sections.gallery.items.cover", "gallery.imageUrl"],
+      dentalRelevance: "需要结合网站上下文确认具体放置位置。",
+      patientFacingCaption: params.asset.title,
+      safetyNotes: ["本条为本地演示分析，建议接入支持图片输入的模型后重新分析。"],
+      analyzedAt: new Date().toISOString(),
+      model: params.config.model || "mock",
+      source: isVisionAnalysis ? "vision" : "metadata",
+    };
+  }
+
+  const prompt = buildMediaAssetAnalysisPrompt(params);
+  const raw =
+    params.config.provider === "openai_responses"
+      ? await callResponsesMediaAnalysis(params.config, prompt, isVisionAnalysis ? params.dataUrl : undefined)
+      : await callChatMediaAnalysis(params.config, prompt, isVisionAnalysis ? params.dataUrl : undefined);
+  const parsed = parseMediaAnalysisPayload(raw);
+
+  return {
+    status: isVisionAnalysis ? "ready" : "metadata_only",
+    language: params.language,
+    ...parsed,
+    analyzedAt: new Date().toISOString(),
+    model: params.config.model,
+    source: isVisionAnalysis ? "vision" : "metadata",
+  };
 }
 
 export async function generateWebsiteDraft(params: {
@@ -782,7 +1011,7 @@ export async function generateVisualWebsiteDraft(params: {
   mediaLibrary: MediaLibraryState;
   instruction: string;
   language: Language;
-  screenshot: VisualInput;
+  screenshots: VisualInput[];
 }): Promise<WebsiteDraftResult> {
   if (params.config.provider === "mock" || !params.config.apiKey.trim()) {
     return createMockVisualDraft(params);
@@ -790,9 +1019,13 @@ export async function generateVisualWebsiteDraft(params: {
 
   const prompt = buildVisualAiPrompt(params);
   const raw =
-    params.config.provider === "openai_responses"
-      ? await callResponsesVisualDraft(params.config, prompt, params.screenshot)
-      : await callChatVisualDraft(params.config, prompt, params.screenshot);
+    params.screenshots.length === 0
+      ? params.config.provider === "openai_responses"
+        ? await callResponsesDraft(params.config, prompt)
+        : await callChatDraft(params.config, prompt)
+      : params.config.provider === "openai_responses"
+      ? await callResponsesVisualDraft(params.config, prompt, params.screenshots)
+      : await callChatVisualDraft(params.config, prompt, params.screenshots);
   const parsed = parseAiDraftPayload(raw);
   const applied = applyChanges({
     content: params.content,
@@ -805,7 +1038,7 @@ export async function generateVisualWebsiteDraft(params: {
     content: applied.content,
     notes: [
       ...parsed.notes,
-      `AI 根据截图返回 ${parsed.changes.length} 项改动，实际应用 ${applied.appliedPaths.length} 项白名单改动。`,
+      `AI 根据${params.screenshots.length ? `${params.screenshots.length} 张截图和` : ""}描述返回 ${parsed.changes.length} 项改动，实际应用 ${applied.appliedPaths.length} 项白名单改动。`,
     ],
   };
 }

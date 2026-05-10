@@ -9,6 +9,7 @@ import type {
   MediaLibraryState,
   PricingItem,
   ServiceItem,
+  VisitorLogDashboard,
 } from "@quanyu/shared";
 import {
   type AdminStatus,
@@ -20,6 +21,7 @@ import {
   fetchAdminStatus,
   fetchChatSessions,
   fetchMediaLibrary,
+  fetchVisitorLogs,
   generateAiVisualSiteDraft,
   generateAiSiteDraft,
   loginAdmin,
@@ -76,6 +78,7 @@ type TabKey =
   | "pricing"
   | "gallery"
   | "media"
+  | "visitorLogs"
   | "backup"
   | "pages";
 
@@ -86,6 +89,7 @@ const ADMIN_TABS: Array<[TabKey, string]> = [
   ["ai", "AI 配置"],
   ["media", "素材库管理"],
   ["gallery", "相册/图册"],
+  ["visitorLogs", "访问日志"],
   ["home", "首页"],
   ["articles", "文章"],
   ["doctors", "医生"],
@@ -107,6 +111,23 @@ function getAdminTabLabel(activeTab: TabKey) {
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function formatDwellTime(value: number | undefined) {
+  if (!value) {
+    return "-";
+  }
+
+  if (value < 60_000) {
+    return `${Math.round(value / 1000)} 秒`;
+  }
+
+  return `${Math.round((value / 60_000) * 10) / 10} 分钟`;
 }
 
 function buildExternalAiInstructions(content: CmsContent) {
@@ -787,10 +808,12 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [aiVisualInstruction, setAiVisualInstruction] = useState(
     "请根据截图指出的位置和我的描述修改网站内容，优先改文案、按钮、模块表达和素材选择。",
   );
-  const [aiVisualScreenshot, setAiVisualScreenshot] = useState<File | null>(null);
+  const [aiVisualScreenshots, setAiVisualScreenshots] = useState<File[]>([]);
   const [pendingAiImport, setPendingAiImport] = useState<PendingAiImport | null>(null);
   const [selectedAiDiffIds, setSelectedAiDiffIds] = useState<string[]>([]);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [visitorLogs, setVisitorLogs] = useState<VisitorLogDashboard | null>(null);
+  const [visitorLogsLoading, setVisitorLogsLoading] = useState(false);
   const [mediaLibrary, setMediaLibrary] = useState<MediaLibraryState>({
     folders: [],
     assets: [],
@@ -816,9 +839,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     return result;
   }, [content, draft]);
   const dirtyLanguageCount = SUPPORTED_LANGUAGES.filter((language) => dirtyLanguages[language]).length;
-  const aiVisualScreenshotPreview = useMemo(
-    () => (aiVisualScreenshot ? window.URL.createObjectURL(aiVisualScreenshot) : ""),
-    [aiVisualScreenshot],
+  const aiVisualScreenshotPreviews = useMemo(
+    () => aiVisualScreenshots.map((file) => ({ file, url: window.URL.createObjectURL(file) })),
+    [aiVisualScreenshots],
   );
 
   const updateDraft = (mutator: (current: CmsContent) => CmsContent) => {
@@ -847,6 +870,10 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           assets: [],
         });
       });
+
+    fetchVisitorLogs(adminToken).then(setVisitorLogs).catch(() => {
+      setVisitorLogs(null);
+    });
   }, [adminToken]);
 
   useEffect(() => {
@@ -862,11 +889,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
 
   useEffect(() => {
     return () => {
-      if (aiVisualScreenshotPreview) {
-        window.URL.revokeObjectURL(aiVisualScreenshotPreview);
-      }
+      aiVisualScreenshotPreviews.forEach((preview) => window.URL.revokeObjectURL(preview.url));
     };
-  }, [aiVisualScreenshotPreview]);
+  }, [aiVisualScreenshotPreviews]);
 
   const save = async () => {
     setSaving(true);
@@ -883,7 +908,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   };
 
   const reloadAdminData = async () => {
-    const [nextContent, nextSessions, nextLibrary] = await Promise.all([
+    const [nextContent, nextSessions, nextLibrary, nextVisitorLogs] = await Promise.all([
       fetchAdminContent(adminToken),
       fetchChatSessions(adminToken).catch(() => []),
       fetchMediaLibrary(adminToken)
@@ -892,12 +917,26 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           folders: [],
           assets: [],
         })),
+      fetchVisitorLogs(adminToken).catch(() => null),
     ]);
 
     setDraft(nextContent);
     setSessions(nextSessions);
     setMediaLibrary(nextLibrary);
+    setVisitorLogs(nextVisitorLogs);
     onSaved(nextContent);
+  };
+
+  const refreshVisitorLogs = async () => {
+    setVisitorLogsLoading(true);
+
+    try {
+      setVisitorLogs(await fetchVisitorLogs(adminToken));
+    } catch (error) {
+      window.alert(`刷新访问日志失败: ${String(error)}`);
+    } finally {
+      setVisitorLogsLoading(false);
+    }
   };
 
   const handleBackupDownload = async () => {
@@ -1101,11 +1140,6 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
       return;
     }
 
-    if (!aiVisualScreenshot) {
-      window.alert("请先上传一张网站截图。");
-      return;
-    }
-
     setGeneratingAiVisualDraft(true);
 
     try {
@@ -1113,7 +1147,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
         {
           instruction,
           language: editingLanguage,
-          screenshot: aiVisualScreenshot,
+          screenshots: aiVisualScreenshots,
         },
         adminToken,
       );
@@ -1129,7 +1163,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
 
       window.alert(
         [
-          `AI 已根据截图生成草稿，发现 ${diffs.length} 项可应用改动。`,
+          `AI 已根据${aiVisualScreenshots.length ? `${aiVisualScreenshots.length} 张截图和` : ""}描述生成草稿，发现 ${diffs.length} 项可应用改动。`,
           ...result.notes.map((item) => `- ${item}`),
         ].join("\n"),
       );
@@ -1301,6 +1335,10 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                   <strong>相册/图册展示</strong>
                   <span>管理前台展示的图片和视频条目，并从素材库选择素材。</span>
                 </button>
+                <button className="admin-entry-card" onClick={() => openAdminTab("visitorLogs")} type="button">
+                  <strong>访问日志</strong>
+                  <span>查看访客 IP、浏览器、设备、来源页面、访问路径和停留时间。</span>
+                </button>
                 <button className="admin-entry-card" onClick={() => openAdminTab("ai")} type="button">
                   <strong>AI 配置与测试</strong>
                   <span>配置模型、接口地址、提示词，并测试供应商是否能调用成功。</span>
@@ -1410,15 +1448,16 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                   </button>
                 </div>
                 <div className="entity-note">
-                  上传页面截图并说明要怎么改。需要使用支持图片输入的模型；如果当前模型不支持视觉，接口会返回失败，不会覆盖网站。
+                  可以只输入文字，也可以上传多张页面截图做对照。带图任务需要使用支持图片输入的模型；如果当前模型不支持视觉，接口会返回失败，不会覆盖网站。
                 </div>
                 <div className="admin-grid">
                   <label className="admin-field">
-                    <span>网站截图</span>
+                    <span>网站截图（可选，可多选）</span>
                     <input
                       type="file"
                       accept="image/*"
-                      onChange={(event) => setAiVisualScreenshot(event.target.files?.[0] ?? null)}
+                      multiple
+                      onChange={(event) => setAiVisualScreenshots(Array.from(event.target.files ?? []))}
                     />
                   </label>
                   <label className="admin-field admin-full-span">
@@ -1426,11 +1465,20 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                     <textarea value={aiVisualInstruction} onChange={(event) => setAiVisualInstruction(event.target.value)} />
                   </label>
                 </div>
-                {aiVisualScreenshotPreview ? (
+                {aiVisualScreenshotPreviews.length ? (
                   <div className="admin-visual-screenshot-preview">
-                    <img src={aiVisualScreenshotPreview} alt="待识别的网站截图" />
-                    <div className="entity-note">
-                      {aiVisualScreenshot?.name} · {Math.round((aiVisualScreenshot?.size ?? 0) / 1024)} KB
+                    {aiVisualScreenshotPreviews.map((preview, index) => (
+                      <div key={`${preview.file.name}-${index}`} className="admin-visual-screenshot-item">
+                        <img src={preview.url} alt={`待识别的网站截图 ${index + 1}`} />
+                        <div className="entity-note">
+                          {preview.file.name} · {Math.round(preview.file.size / 1024)} KB
+                        </div>
+                      </div>
+                    ))}
+                    <div className="admin-entity-actions">
+                      <button className="button secondary" onClick={() => setAiVisualScreenshots([])} type="button">
+                        清空截图
+                      </button>
                     </div>
                   </div>
                 ) : null}
@@ -2738,6 +2786,129 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
 
           {activeTab === "media" ? (
             <MediaLibraryManager library={mediaLibrary} adminToken={adminToken} onLibraryChange={setMediaLibrary} />
+          ) : null}
+
+          {activeTab === "visitorLogs" ? (
+            <div className="card admin-panel">
+              <div className="admin-toolbar">
+                <h2>访问日志</h2>
+                <button className="button secondary" onClick={refreshVisitorLogs} type="button" disabled={visitorLogsLoading}>
+                  {visitorLogsLoading ? "刷新中..." : "刷新日志"}
+                </button>
+              </div>
+              <div className="entity-note">
+                记录前台访客的访问路径、IP、设备、浏览器、来源和停留时间。后台页面不会写入访客日志。
+              </div>
+              {visitorLogs ? (
+                <>
+                  <div className="admin-log-summary-grid">
+                    <div className="card admin-log-metric">
+                      <span>访客</span>
+                      <strong>{visitorLogs.summary.totalVisitors}</strong>
+                    </div>
+                    <div className="card admin-log-metric">
+                      <span>会话</span>
+                      <strong>{visitorLogs.summary.totalSessions}</strong>
+                    </div>
+                    <div className="card admin-log-metric">
+                      <span>页面访问</span>
+                      <strong>{visitorLogs.summary.pageViews}</strong>
+                    </div>
+                    <div className="card admin-log-metric">
+                      <span>平均停留</span>
+                      <strong>{visitorLogs.summary.averageDwellSec} 秒</strong>
+                    </div>
+                  </div>
+                  <div className="admin-subsection">
+                    <div className="admin-log-columns">
+                      <div>
+                        <h3>热门页面</h3>
+                        <div className="admin-log-list">
+                          {visitorLogs.topPages.length ? (
+                            visitorLogs.topPages.map((item) => (
+                              <div key={item.pagePath} className="admin-log-row">
+                                <span>{item.pagePath}</span>
+                                <strong>{item.views}</strong>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="entity-note">暂无页面访问。</div>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <h3>浏览器</h3>
+                        <div className="admin-log-list">
+                          {visitorLogs.topBrowsers.length ? (
+                            visitorLogs.topBrowsers.map((item) => (
+                              <div key={item.browser} className="admin-log-row">
+                                <span>{item.browser}</span>
+                                <strong>{item.sessions}</strong>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="entity-note">暂无浏览器数据。</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="admin-subsection">
+                    <h3>最近访问明细</h3>
+                    <div className="admin-log-table-wrap">
+                      <table className="admin-log-table">
+                        <thead>
+                          <tr>
+                            <th>时间</th>
+                            <th>事件</th>
+                            <th>页面</th>
+                            <th>访客 / IP</th>
+                            <th>设备</th>
+                            <th>浏览器</th>
+                            <th>来源</th>
+                            <th>停留</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visitorLogs.recentEvents.length ? (
+                            visitorLogs.recentEvents.map((event) => (
+                              <tr key={event.id}>
+                                <td>{formatDateTime(event.createdAt)}</td>
+                                <td>{event.eventName}</td>
+                                <td>
+                                  <strong>{event.pagePath}</strong>
+                                  <span>{event.pageTitle || event.pageUrl}</span>
+                                </td>
+                                <td>
+                                  <strong>{event.ip}</strong>
+                                  <span>{event.visitorId}</span>
+                                </td>
+                                <td>
+                                  <strong>{event.deviceType}</strong>
+                                  <span>{event.os}</span>
+                                </td>
+                                <td>
+                                  <strong>{event.browser}</strong>
+                                  <span>{event.userAgent}</span>
+                                </td>
+                                <td>{event.referrer || "direct"}</td>
+                                <td>{formatDwellTime(event.dwellTimeMs)}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={8}>当前还没有访问日志。</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="entity-note">访问日志加载中或暂时不可用。</div>
+              )}
+            </div>
           ) : null}
 
           {activeTab === "backup" ? (

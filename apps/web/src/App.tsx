@@ -7,7 +7,7 @@ import { Header } from "../components/layout/header";
 import { LanguageMenu } from "../components/language-menu";
 import { SectionRenderer } from "../components/section-renderer";
 import { ChatWidget } from "./components/chat-widget";
-import { ADMIN_TOKEN_STORAGE_KEY, detectPreferredLanguage, fetchContent, resolveAssetUrl, saveContent } from "./lib/api";
+import { ADMIN_TOKEN_STORAGE_KEY, detectPreferredLanguage, fetchContent, resolveAssetUrl, saveContent, sendAnalyticsEvent } from "./lib/api";
 import {
   DEFAULT_LANGUAGE,
   normalizeLanguage,
@@ -22,6 +22,40 @@ import { AdminPage } from "./pages/admin-page";
 import { MobileMediaPage } from "./pages/mobile-media-page";
 
 const CONTENT_CACHE_KEY = "quanyu_cached_content";
+const VISITOR_ID_KEY = "quanyu_visitor_id";
+const ANALYTICS_SESSION_ID_KEY = "quanyu_analytics_session_id";
+
+function getStableBrowserId(key: string) {
+  try {
+    const existing = window.localStorage.getItem(key);
+
+    if (existing) {
+      return existing;
+    }
+
+    const next = `${key}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    window.localStorage.setItem(key, next);
+    return next;
+  } catch {
+    return `${key}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+function detectSearchEngine(referrer: string) {
+  if (!referrer) return undefined;
+
+  try {
+    const host = new URL(referrer).hostname.toLowerCase();
+    if (host.includes("google.")) return "google";
+    if (host.includes("yandex.")) return "yandex";
+    if (host.includes("baidu.")) return "baidu";
+    if (host.includes("bing.")) return "bing";
+    if (host.includes("sogou.")) return "sogou";
+    return host;
+  } catch {
+    return undefined;
+  }
+}
 
 function usePathname() {
   const [pathname, setPathname] = useState(window.location.pathname);
@@ -527,6 +561,54 @@ export function App() {
       language === "ru" ? "ru_RU" : language === "en" ? "en_US" : "zh_CN",
     );
   }, [language, resolvedContent.homePage.seoDescription, resolvedContent.homePage.seoTitle, resolvedContent.homePage.title]);
+
+  useEffect(() => {
+    if (pathname.startsWith("/admin")) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    const visitorId = getStableBrowserId(VISITOR_ID_KEY);
+    const sessionId = getStableBrowserId(ANALYTICS_SESSION_ID_KEY);
+    const referrer = document.referrer || "";
+
+    const basePayload = {
+      sessionId,
+      visitorId,
+      pageUrl: window.location.href,
+      pageTitle: document.title,
+      referrer,
+      searchEngine: detectSearchEngine(referrer),
+      language,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      },
+      screen: {
+        width: window.screen.width,
+        height: window.screen.height,
+      },
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      extra: {
+        colorDepth: window.screen.colorDepth,
+        hardwareConcurrency: window.navigator.hardwareConcurrency,
+        deviceMemory: "deviceMemory" in window.navigator ? (window.navigator as Navigator & { deviceMemory?: number }).deviceMemory : undefined,
+      },
+    };
+
+    void sendAnalyticsEvent({
+      ...basePayload,
+      eventName: "page_start",
+    }).catch(() => undefined);
+
+    return () => {
+      void sendAnalyticsEvent({
+        ...basePayload,
+        eventName: "page_leave",
+        dwellTimeMs: Math.max(0, Date.now() - startedAt),
+      }).catch(() => undefined);
+    };
+  }, [language, pathname]);
 
   const updateVisualSection = (sectionIndex: number, nextSection: PageSection) => {
     setContent((current) => {

@@ -1,4 +1,4 @@
-import type { AiConfig, ChatSession, CmsContent, Language, MediaLibraryAsset, MediaLibraryState } from "@quanyu/shared";
+import type { AiConfig, ChatSession, CmsContent, Language, MediaLibraryAsset, MediaLibraryState, VisitorLogDashboard } from "@quanyu/shared";
 
 const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 export const ADMIN_TOKEN_STORAGE_KEY = "quanyu_admin_token";
@@ -549,14 +549,16 @@ export async function generateAiVisualSiteDraft(
   payload: {
     instruction: string;
     language: Language;
-    screenshot: File;
+    screenshots: File[];
   },
   token: string,
 ) {
   const formData = new FormData();
   formData.set("instruction", payload.instruction);
   formData.set("language", payload.language);
-  formData.set("screenshot", payload.screenshot);
+  for (const screenshot of payload.screenshots) {
+    formData.append("screenshots", screenshot);
+  }
 
   const response = await fetchWithFallback("/api/admin/ai/visual-site-draft", {
     method: "POST",
@@ -573,6 +575,49 @@ export async function generateAiVisualSiteDraft(
     content: CmsContent;
     notes: string[];
   };
+}
+
+export async function sendAnalyticsEvent(payload: {
+  sessionId: string;
+  visitorId: string;
+  eventName: string;
+  pageUrl: string;
+  pageTitle?: string;
+  referrer?: string;
+  searchEngine?: string;
+  dwellTimeMs?: number;
+  language?: Language;
+  viewport?: { width: number; height: number };
+  screen?: { width: number; height: number };
+  timezone?: string;
+  extra?: Record<string, unknown>;
+}) {
+  const response = await fetchWithFallback("/api/analytics/events", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "send_analytics_event_failed"));
+  }
+
+  return (await response.json()) as { ok: true; id: string };
+}
+
+export async function fetchVisitorLogs(token: string) {
+  const response = await fetchWithFallback("/api/admin/visitor-logs", {
+    headers: createAdminHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "fetch_visitor_logs_failed"));
+  }
+
+  return (await response.json()) as VisitorLogDashboard;
 }
 
 export async function testAiConfig(config: AiConfig, token: string) {
@@ -888,6 +933,44 @@ export async function deleteMediaAsset(id: string, token: string) {
   }
 
   return (await response.json()) as { ok: true; library: MediaLibraryState };
+}
+
+export async function analyzeMediaAsset(id: string, language: Language, token: string) {
+  const response = await fetchWithFallback(`/api/admin/media-library/assets/${id}/ai-analyze`, {
+    method: "POST",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ language }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "analyze_asset_failed"));
+  }
+
+  return (await response.json()) as { ok: true; asset: MediaLibraryAsset; library: MediaLibraryState };
+}
+
+export async function analyzeAllMediaAssets(language: Language, token: string) {
+  const response = await fetchWithFallback("/api/admin/media-library/ai-analyze-all", {
+    method: "POST",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ language }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "analyze_all_assets_failed"));
+  }
+
+  return (await response.json()) as {
+    ok: true;
+    results: Array<{ id: string; ok: boolean; error?: string }>;
+    library: MediaLibraryState;
+  };
 }
 
 export async function fetchChatSessions(token: string) {

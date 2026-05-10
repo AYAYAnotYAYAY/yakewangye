@@ -1,5 +1,7 @@
-import type { MediaLibraryAsset, MediaLibraryFolder, MediaLibraryState } from "@quanyu/shared";
+import type { Language, MediaLibraryAsset, MediaLibraryFolder, MediaLibraryState } from "@quanyu/shared";
 import {
+  analyzeAllMediaAssets,
+  analyzeMediaAsset,
   copyMediaFolder,
   createMediaFolder,
   deleteMediaAsset,
@@ -488,12 +490,15 @@ function FolderTree(props: {
 export function MediaLibraryManager(props: {
   library: MediaLibraryState;
   adminToken: string;
+  language: Language;
   onLibraryChange: (library: MediaLibraryState) => void;
 }) {
   const [currentFolderPath, setCurrentFolderPath] = useState("");
   const [query, setQuery] = useState("");
   const [queueItems, setQueueItems] = useState<UploadQueueItem[]>([]);
   const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
+  const [analyzingIds, setAnalyzingIds] = useState<string[]>([]);
+  const [analyzingAll, setAnalyzingAll] = useState(false);
 
   useEffect(() => {
     if (currentFolderPath && !props.library.folders.some((folder) => folder.path === currentFolderPath)) {
@@ -517,6 +522,44 @@ export function MediaLibraryManager(props: {
   const folderOptions = buildFolderOptions(props.library.folders);
   const hasPendingUploads = queueItems.some((item) => item.status === "queued" || item.status === "uploading");
   const allUploadsFinished = queueItems.length > 0 && queueItems.every((item) => item.status === "success" || item.status === "error");
+  const analyzedCount = props.library.assets.filter((asset) => asset.aiAnalysis?.status === "ready" || asset.aiAnalysis?.status === "metadata_only").length;
+
+  async function handleAnalyzeAsset(asset: MediaLibraryAsset) {
+    setAnalyzingIds((current) => [...current, asset.id]);
+
+    try {
+      const result = await analyzeMediaAsset(asset.id, props.language, props.adminToken);
+      props.onLibraryChange(result.library);
+    } catch (error) {
+      window.alert(`AI 分析素材失败: ${String(error)}`);
+    } finally {
+      setAnalyzingIds((current) => current.filter((id) => id !== asset.id));
+    }
+  }
+
+  async function handleAnalyzeAllAssets() {
+    if (!props.library.assets.length) {
+      window.alert("素材库还没有素材。");
+      return;
+    }
+
+    if (!window.confirm(`将依次分析 ${props.library.assets.length} 个素材。图片会调用视觉模型，视频会先基于元数据生成适用建议。是否继续？`)) {
+      return;
+    }
+
+    setAnalyzingAll(true);
+
+    try {
+      const result = await analyzeAllMediaAssets(props.language, props.adminToken);
+      props.onLibraryChange(result.library);
+      const failedCount = result.results.filter((item) => !item.ok).length;
+      window.alert(`AI 素材分析完成：成功 ${result.results.length - failedCount} 个，失败 ${failedCount} 个。`);
+    } catch (error) {
+      window.alert(`批量 AI 分析失败: ${String(error)}`);
+    } finally {
+      setAnalyzingAll(false);
+    }
+  }
 
   async function handleCreateFolder() {
     const name = window.prompt("请输入新文件夹名称");

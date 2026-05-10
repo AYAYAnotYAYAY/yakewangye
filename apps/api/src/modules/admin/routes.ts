@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -17,7 +17,7 @@ import {
   validateAdminCredentials,
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
-import { generateVisualWebsiteDraft, generateWebsiteDraft } from "../../lib/admin-ai-gateway";
+import { analyzeMediaAsset, generateVisualWebsiteDraft, generateWebsiteDraft } from "../../lib/admin-ai-gateway";
 import { testAiProviderConnection } from "../../lib/ai-gateway";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
 import {
@@ -76,7 +76,12 @@ const aiConfigTestSchema = z.object({
   config: aiConfigSchema,
 });
 
+const analyzeMediaAssetSchema = z.object({
+  language: z.enum(["zh", "ru", "en"]).default("zh"),
+});
+
 const VISUAL_AI_MAX_SCREENSHOT_BYTES = Math.max(1, Number(process.env.VISUAL_AI_MAX_SCREENSHOT_MB ?? 8) || 8) * 1024 * 1024;
+const VISUAL_AI_MAX_SCREENSHOTS = Math.max(1, Number(process.env.VISUAL_AI_MAX_SCREENSHOTS ?? 6) || 6);
 
 const supportedImageExtensions = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".heic", ".heif"]);
 const supportedVideoExtensions = new Set([".mp4", ".mov", ".m4v", ".webm", ".ogg", ".ogv"]);
@@ -141,6 +146,23 @@ function parseAssetId(request: FastifyRequest) {
   return params.id.trim();
 }
 
+async function buildAssetDataUrl(asset: { storageKey: string; mimeType: string; mediaType: "image" | "video" }) {
+  if (asset.mediaType !== "image") {
+    return undefined;
+  }
+
+  const uploadsDir = getUploadsDir();
+  const targetPath = path.resolve(uploadsDir, asset.storageKey);
+  const uploadsRoot = path.resolve(uploadsDir);
+
+  if (targetPath !== uploadsRoot && !targetPath.startsWith(`${uploadsRoot}${path.sep}`)) {
+    throw new Error("invalid_asset_storage_key");
+  }
+
+  const buffer = await readFile(targetPath);
+  return `data:${asset.mimeType};base64,${buffer.toString("base64")}`;
+}
+
 function parseUploadSessionId(request: FastifyRequest) {
   const params = request.params as { uploadId?: string };
 
@@ -169,27 +191,56 @@ function normalizeMultipartFieldValue(value: unknown) {
 }
 
 async function readVisualDraftPayload(request: FastifyRequest) {
-  const file = await request.file();
+  let instruction = "";
+  let language = "";
+  const screenshots: Array<{ fileName: string; mimeType: string; dataUrl: string }> = [];
 
-  if (!file) {
-    throw new Error("screenshot_required");
+  for await (const part of request.parts({
+    limits: {
+      files: VISUAL_AI_MAX_SCREENSHOTS,
+      fileSize: VISUAL_AI_MAX_SCREENSHOT_BYTES,
+      fields: 8,
+    },
+  })) {
+    if (part.type === "field") {
+      if (part.fieldname === "instruction") {
+        instruction = normalizeMultipartFieldValue(part.value).trim();
+      }
+
+      if (part.fieldname === "language") {
+        language = normalizeMultipartFieldValue(part.value).trim();
+      }
+
+      continue;
+    }
+
+    if (part.fieldname !== "screenshot" && part.fieldname !== "screenshots") {
+      await part.toBuffer();
+      continue;
+    }
+
+    const mimeType = part.mimetype.trim().toLowerCase();
+
+    if (!mimeType.startsWith("image/")) {
+      throw new Error("screenshot_must_be_image");
+    }
+
+    if (screenshots.length >= VISUAL_AI_MAX_SCREENSHOTS) {
+      throw new Error("too_many_screenshots");
+    }
+
+    const buffer = await part.toBuffer();
+
+    if (buffer.byteLength > VISUAL_AI_MAX_SCREENSHOT_BYTES) {
+      throw new Error("screenshot_too_large");
+    }
+
+    screenshots.push({
+      fileName: part.filename || `screenshot-${screenshots.length + 1}`,
+      mimeType,
+      dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+    });
   }
-
-  const mimeType = file.mimetype.trim().toLowerCase();
-
-  if (!mimeType.startsWith("image/")) {
-    throw new Error("screenshot_must_be_image");
-  }
-
-  const buffer = await file.toBuffer();
-
-  if (buffer.byteLength > VISUAL_AI_MAX_SCREENSHOT_BYTES) {
-    throw new Error("screenshot_too_large");
-  }
-
-  const fields = file.fields as Record<string, unknown>;
-  const instruction = normalizeMultipartFieldValue(fields.instruction).trim();
-  const language = normalizeMultipartFieldValue(fields.language).trim();
 
   if (!instruction) {
     throw new Error("instruction_required");
@@ -202,11 +253,7 @@ async function readVisualDraftPayload(request: FastifyRequest) {
   return {
     instruction,
     language: language as "zh" | "ru" | "en",
-    screenshot: {
-      fileName: file.filename || "screenshot",
-      mimeType,
-      dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
-    },
+    screenshots,
   };
 }
 
@@ -550,7 +597,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         mediaLibrary: library,
         instruction: payload.instruction,
         language: payload.language,
-        screenshot: payload.screenshot,
+        screenshots: payload.screenshots,
       });
 
       return {
@@ -751,6 +798,129 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
       throw error;
     }
+  });
+
+  app.post("/api/admin/media-library/assets/:id/ai-analyze", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const parsed = analyzeMediaAssetSchema.safeParse(request.body ?? {});
+
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      const content = await readContent();
+      const library = await mediaLibraryRepository.getState();
+      const asset = library.assets.find((item) => item.id === parseAssetId(request));
+
+      if (!asset) {
+        return reply.status(404).send({
+          ok: false,
+          error: "asset_not_found",
+        });
+      }
+
+      const analysis = await analyzeMediaAsset({
+        config: content.aiConfig,
+        asset,
+        language: parsed.data.language,
+        dataUrl: await buildAssetDataUrl(asset),
+      });
+      const updated = await mediaLibraryRepository.updateAsset({
+        id: asset.id,
+        aiAnalysis: analysis,
+      });
+
+      return {
+        ok: true,
+        asset: updated,
+        library: await mediaLibraryRepository.getState(),
+      };
+    } catch (error) {
+      return reply.status(502).send({
+        ok: false,
+        error: "media_asset_analysis_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/admin/media-library/ai-analyze-all", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const parsed = analyzeMediaAssetSchema.safeParse(request.body ?? {});
+
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.flatten(),
+      });
+    }
+
+    const content = await readContent();
+    const library = await mediaLibraryRepository.getState();
+    const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+
+    for (const asset of library.assets) {
+      try {
+        const analysis = await analyzeMediaAsset({
+          config: content.aiConfig,
+          asset,
+          language: parsed.data.language,
+          dataUrl: await buildAssetDataUrl(asset),
+        });
+        await mediaLibraryRepository.updateAsset({
+          id: asset.id,
+          aiAnalysis: analysis,
+        });
+        results.push({ id: asset.id, ok: true });
+      } catch (error) {
+        const failedAnalysis = {
+          status: "failed" as const,
+          language: parsed.data.language,
+          summary: "",
+          visualDescription: "",
+          tags: [],
+          suggestedUseCases: [],
+          unsuitableUseCases: [],
+          placementSuggestions: [],
+          dentalRelevance: "",
+          patientFacingCaption: "",
+          safetyNotes: [],
+          analyzedAt: new Date().toISOString(),
+          model: content.aiConfig.model,
+          source: "metadata" as const,
+          error: error instanceof Error ? error.message : String(error),
+        };
+        await mediaLibraryRepository.updateAsset({
+          id: asset.id,
+          aiAnalysis: failedAnalysis,
+        });
+        results.push({
+          id: asset.id,
+          ok: false,
+          error: failedAnalysis.error,
+        });
+      }
+    }
+
+    return {
+      ok: true,
+      results,
+      library: await mediaLibraryRepository.getState(),
+    };
   });
 
   app.delete("/api/admin/media-library/assets/:id", async (request, reply) => {

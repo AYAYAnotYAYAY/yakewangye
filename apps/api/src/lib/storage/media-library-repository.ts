@@ -27,7 +27,7 @@ export type MediaUploadInput = {
 export type MediaLibraryRepository = {
   getState: () => Promise<MediaLibraryState>;
   add: (input: MediaUploadInput) => Promise<MediaLibraryAsset>;
-  updateAsset: (params: { id: string; title?: string; folderPath?: string }) => Promise<MediaLibraryAsset>;
+  updateAsset: (params: { id: string; title?: string; folderPath?: string; aiAnalysis?: MediaLibraryAsset["aiAnalysis"] }) => Promise<MediaLibraryAsset>;
   deleteAsset: (id: string) => Promise<void>;
   createFolder: (params: { name: string; parentPath?: string }) => Promise<MediaLibraryFolder>;
   renameFolder: (params: { path: string; newName: string }) => Promise<MediaLibraryState>;
@@ -126,6 +126,7 @@ async function readState() {
             createdAt: String(legacyAsset.createdAt ?? new Date().toISOString()),
             updatedAt: String(legacyAsset.updatedAt ?? legacyAsset.createdAt ?? new Date().toISOString()),
             source: legacyAsset.source === "import" || legacyAsset.source === "copy" ? legacyAsset.source : "upload",
+            aiAnalysis: legacyAsset.aiAnalysis,
           };
         }),
       }),
@@ -243,6 +244,10 @@ function createJsonMediaLibraryRepository(): MediaLibraryRepository {
         }
 
         target.title = nextTitle;
+      }
+
+      if (params.aiAnalysis !== undefined) {
+        target.aiAnalysis = params.aiAnalysis;
       }
 
       target.updatedAt = new Date().toISOString();
