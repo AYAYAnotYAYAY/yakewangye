@@ -130,6 +130,24 @@ function formatDwellTime(value: number | undefined) {
   return `${Math.round((value / 60_000) * 10) / 10} 分钟`;
 }
 
+function formatAdminError(error: unknown) {
+  const raw = error instanceof Error ? error.message : String(error);
+
+  if (/invalid_ai_draft_response|Expected .* JSON|JSON at position/i.test(raw)) {
+    return "AI 返回的内容不是合格 JSON，系统已尝试自动修复但仍失败。请把需求写短一点，或先运行素材库 AI 分析后再重试。";
+  }
+
+  if (/context|token|too large|request entity too large|maximum|大小|超/i.test(raw)) {
+    return "本次请求内容太大。请减少截图数量/图片大小，或先用素材库的“AI 分析未处理素材”，再用纯文字让 AI 根据素材描述改站。";
+  }
+
+  if (/ai_site_draft_failed|visual_ai_draft_failed|generate_ai_site_draft_failed/i.test(raw)) {
+    return "AI 生成失败。请先在“AI 配置”测试连接，确认模型可用；如果你用的是文本模型，请不要上传截图。";
+  }
+
+  return raw;
+}
+
 function buildExternalAiInstructions(content: CmsContent) {
   const contact = content.siteSettings.primaryContact;
 
@@ -1144,7 +1162,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
         ].join("\n"),
       );
     } catch (error) {
-      window.alert(`AI 生成网站草稿失败: ${String(error)}`);
+      window.alert(`AI 生成网站草稿失败：${formatAdminError(error)}`);
     } finally {
       setGeneratingAiSiteDraft(false);
     }
@@ -1186,7 +1204,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
         ].join("\n"),
       );
     } catch (error) {
-      window.alert(`AI 截图改站失败: ${String(error)}`);
+      window.alert(`AI 截图改站失败：${formatAdminError(error)}`);
     } finally {
       setGeneratingAiVisualDraft(false);
     }

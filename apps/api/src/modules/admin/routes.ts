@@ -558,21 +558,29 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       });
     }
 
-    const content = await readContent();
-    const library = await mediaLibraryRepository.getState();
-    const result = await generateWebsiteDraft({
-      config: content.aiConfig,
-      content,
-      mediaLibrary: library,
-      instruction: parsed.data.instruction,
-      language: parsed.data.language,
-    });
+    try {
+      const content = await readContent();
+      const library = await mediaLibraryRepository.getState();
+      const result = await generateWebsiteDraft({
+        config: content.aiConfig,
+        content,
+        mediaLibrary: library,
+        instruction: parsed.data.instruction,
+        language: parsed.data.language,
+      });
 
-    return {
-      ok: true,
-      content: result.content,
-      notes: result.notes,
-    };
+      return {
+        ok: true,
+        content: result.content,
+        notes: result.notes,
+      };
+    } catch (error) {
+      return reply.status(502).send({
+        ok: false,
+        error: "ai_site_draft_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   app.post("/api/admin/ai/visual-site-draft", async (request, reply) => {

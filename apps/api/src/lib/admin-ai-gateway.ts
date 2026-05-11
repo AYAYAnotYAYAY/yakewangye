@@ -58,6 +58,17 @@ type MediaAnalysisInput = {
   dataUrl?: string;
 };
 
+const AI_DRAFT_MEDIA_ASSET_LIMIT = Math.max(8, Number(process.env.AI_DRAFT_MEDIA_ASSET_LIMIT ?? 28) || 28);
+
+function truncateText(value: string | undefined, maxLength: number) {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function compactArray(values: string[] | undefined, limit: number, maxItemLength: number) {
+  return (values ?? []).slice(0, limit).map((value) => truncateText(value, maxItemLength)).filter(Boolean);
+}
+
 function deepClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -424,6 +435,35 @@ function parseAiDraftPayload(raw: string) {
   }
 }
 
+function createAiDraftParseError(error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`invalid_ai_draft_response: AI 返回的 JSON 格式不合格或被截断。已尝试自动修复但仍失败。原始解析错误：${detail}`);
+}
+
+function buildCompactMediaAssets(mediaLibrary: MediaLibraryState) {
+  return [...mediaLibrary.assets]
+    .sort((left, right) => {
+      const score = (asset: MediaLibraryAsset) =>
+        asset.aiAnalysis?.status === "ready" ? 3 : asset.aiAnalysis?.status === "metadata_only" ? 2 : asset.aiAnalysis ? 1 : 0;
+      return score(right) - score(left) || right.updatedAt.localeCompare(left.updatedAt);
+    })
+    .slice(0, AI_DRAFT_MEDIA_ASSET_LIMIT)
+    .map((asset) => ({
+      title: truncateText(asset.title, 60),
+      url: asset.url,
+      mediaType: asset.mediaType,
+      folderPath: truncateText(asset.folderPath, 80),
+      aiSummary: truncateText(asset.aiAnalysis?.summary, 140),
+      visualDescription: truncateText(asset.aiAnalysis?.visualDescription, 220),
+      tags: compactArray(asset.aiAnalysis?.tags, 8, 24),
+      suggestedUseCases: compactArray(asset.aiAnalysis?.suggestedUseCases, 4, 80),
+      unsuitableUseCases: compactArray(asset.aiAnalysis?.unsuitableUseCases, 3, 80),
+      placementSuggestions: compactArray(asset.aiAnalysis?.placementSuggestions, 4, 80),
+      patientFacingCaption: truncateText(asset.aiAnalysis?.patientFacingCaption, 100),
+      analysisStatus: asset.aiAnalysis?.status ?? "not_analyzed",
+    }));
+}
+
 function buildAiPrompt(params: {
   content: CmsContent;
   mediaLibrary: MediaLibraryState;
@@ -431,20 +471,7 @@ function buildAiPrompt(params: {
   language: Language;
 }) {
   const allowedUpdates = buildAllowedUpdates(resolveContentForLanguage(params.content, params.language));
-  const mediaAssets = params.mediaLibrary.assets.slice(0, 80).map((asset) => ({
-    title: asset.title,
-    url: asset.url,
-    mediaType: asset.mediaType,
-    folderPath: asset.folderPath,
-    aiSummary: asset.aiAnalysis?.summary,
-    visualDescription: asset.aiAnalysis?.visualDescription,
-    tags: asset.aiAnalysis?.tags,
-    suggestedUseCases: asset.aiAnalysis?.suggestedUseCases,
-    unsuitableUseCases: asset.aiAnalysis?.unsuitableUseCases,
-    placementSuggestions: asset.aiAnalysis?.placementSuggestions,
-    patientFacingCaption: asset.aiAnalysis?.patientFacingCaption,
-    analysisStatus: asset.aiAnalysis?.status,
-  }));
+  const mediaAssets = buildCompactMediaAssets(params.mediaLibrary);
 
   return [
     "你是泉寓门诊网站的 AI 改版助手，负责根据管理员需求生成网站内容和素材使用草稿。",
@@ -470,7 +497,7 @@ function buildAiPrompt(params: {
         path: update.path,
         label: update.label,
         kind: update.kind,
-        currentValue: update.currentValue,
+        currentValue: truncateText(update.currentValue, update.kind === "text" ? 300 : 160),
       })),
       null,
       2,
@@ -842,6 +869,92 @@ async function callResponsesVisualDraft(config: AiConfig, prompt: string, screen
   return extractResponsesText(payload);
 }
 
+async function callChatJsonRepair(config: AiConfig, raw: string) {
+  const body = {
+    model: config.model,
+    temperature: 0,
+    max_tokens: 1600,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: "你是 JSON 修复器。只返回合法 JSON，不要解释。",
+      },
+      {
+        role: "user",
+        content: [
+          "把下面内容修复为合法 JSON，结构必须是：",
+          '{"notes":["说明"],"changes":[{"path":"allowed.path","value":"新内容"}]}',
+          "如果某项不完整就删除该项。不要新增非原文表达的改动。",
+          "",
+          raw.slice(0, 12000),
+        ].join("\n"),
+      },
+    ],
+  };
+  const fallbackBody = {
+    ...body,
+    response_format: undefined,
+  };
+  const payload = await postAiJson({
+    endpoint: config.endpoint,
+    apiKey: config.apiKey,
+    body,
+    fallbackBody,
+  });
+
+  return extractChatText(payload);
+}
+
+async function callResponsesJsonRepair(config: AiConfig, raw: string) {
+  const body = {
+    model: config.model,
+    temperature: 0,
+    max_output_tokens: 1600,
+    instructions: "你是 JSON 修复器。只返回合法 JSON，不要解释。",
+    input: [
+      "把下面内容修复为合法 JSON，结构必须是：",
+      '{"notes":["说明"],"changes":[{"path":"allowed.path","value":"新内容"}]}',
+      "如果某项不完整就删除该项。不要新增非原文表达的改动。",
+      "",
+      raw.slice(0, 12000),
+    ].join("\n"),
+    text: {
+      format: {
+        type: "json_object",
+      },
+    },
+  };
+  const fallbackBody = {
+    ...body,
+    text: undefined,
+  };
+  const payload = await postAiJson({
+    endpoint: normalizeResponsesEndpoint(config.endpoint),
+    apiKey: config.apiKey,
+    body,
+    fallbackBody,
+  });
+
+  return extractResponsesText(payload);
+}
+
+async function parseAiDraftPayloadWithRepair(raw: string, config: AiConfig) {
+  try {
+    return parseAiDraftPayload(raw);
+  } catch (firstError) {
+    try {
+      const repaired =
+        config.provider === "openai_responses"
+          ? await callResponsesJsonRepair(config, raw)
+          : await callChatJsonRepair(config, raw);
+      return parseAiDraftPayload(repaired);
+    } catch (repairError) {
+      throw createAiDraftParseError(repairError instanceof Error ? repairError : firstError);
+    }
+  }
+}
+
 async function callChatMediaAnalysis(config: AiConfig, prompt: string, dataUrl?: string) {
   const content = dataUrl
     ? [
@@ -1013,7 +1126,7 @@ export async function generateWebsiteDraft(params: {
     params.config.provider === "openai_responses"
       ? await callResponsesDraft(params.config, prompt)
       : await callChatDraft(params.config, prompt);
-  const parsed = parseAiDraftPayload(raw);
+  const parsed = await parseAiDraftPayloadWithRepair(raw, params.config);
   const applied = applyChanges({
     content: params.content,
     language: params.language,
@@ -1051,7 +1164,7 @@ export async function generateVisualWebsiteDraft(params: {
       : params.config.provider === "openai_responses"
       ? await callResponsesVisualDraft(params.config, prompt, params.screenshots)
       : await callChatVisualDraft(params.config, prompt, params.screenshots);
-  const parsed = parseAiDraftPayload(raw);
+  const parsed = await parseAiDraftPayloadWithRepair(raw, params.config);
   const applied = applyChanges({
     content: params.content,
     language: params.language,
