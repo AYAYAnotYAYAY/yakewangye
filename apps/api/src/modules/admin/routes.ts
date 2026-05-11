@@ -17,7 +17,7 @@ import {
   validateAdminCredentials,
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
-import { analyzeMediaAsset, generateVisualWebsiteDraft, generateWebsiteDraft } from "../../lib/admin-ai-gateway";
+import { analyzeMediaAsset, generateVisualWebsiteDraft, generateWebsiteDraft, translateWebsiteFromChinese } from "../../lib/admin-ai-gateway";
 import { testAiProviderConnection } from "../../lib/ai-gateway";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
 import {
@@ -70,6 +70,11 @@ const copyFolderSchema = z.object({
 const aiWebsiteDraftSchema = z.object({
   instruction: z.string().trim().min(1).max(2000),
   language: z.enum(["zh", "ru", "en"]).default("zh"),
+});
+
+const aiTranslateFromZhSchema = z.object({
+  content: cmsContentSchema,
+  targetLanguages: z.array(z.enum(["ru", "en"])).min(1).max(2).default(["ru", "en"]),
 });
 
 const aiConfigTestSchema = z.object({
@@ -622,6 +627,43 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       return reply.status(502).send({
         ok: false,
         error: "visual_ai_draft_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/admin/ai/translate-from-zh", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const parsed = aiTranslateFromZhSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      const result = await translateWebsiteFromChinese({
+        config: parsed.data.content.aiConfig,
+        content: parsed.data.content,
+        targetLanguages: parsed.data.targetLanguages,
+      });
+
+      return {
+        ok: true,
+        content: result.content,
+        notes: result.notes,
+      };
+    } catch (error) {
+      return reply.status(502).send({
+        ok: false,
+        error: "ai_translate_from_zh_failed",
         message: error instanceof Error ? error.message : String(error),
       });
     }

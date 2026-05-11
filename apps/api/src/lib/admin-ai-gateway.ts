@@ -20,6 +20,11 @@ type WebsiteDraftResult = {
   notes: string[];
 };
 
+type TranslationDraftResult = {
+  content: CmsContent;
+  notes: string[];
+};
+
 type VisualInput = {
   dataUrl: string;
   mimeType: string;
@@ -635,6 +640,41 @@ function buildAiPrompt(params: {
     "",
     "mediaAssets:",
     JSON.stringify(mediaAssets, null, 2),
+  ].join("\n");
+}
+
+function buildTranslationPrompt(params: {
+  content: CmsContent;
+  targetLanguage: Exclude<Language, "zh">;
+}) {
+  const sourceUpdates = buildAllowedUpdates(resolveContentForLanguage(params.content, "zh")).filter((update) => update.kind === "text");
+  const targetName = params.targetLanguage === "ru" ? "俄语" : "英语";
+
+  return [
+    "你是牙科门诊网站三语内容翻译助手。",
+    "你只能返回 JSON，不要返回 Markdown。",
+    `任务：把中文主内容翻译成${targetName}，用于网站 ${params.targetLanguage} 语言版本。`,
+    "必须遵守：",
+    "1. 只翻译 sourceTexts 中列出的 value，返回同一个 path 的翻译结果。",
+    "2. 不要新增、删除或改名 path。",
+    "3. 不要翻译 URL、id、slug、href、电话、地址、Telegram、API Key、模型配置。",
+    "4. 医疗内容要自然、克制，不要编造医生资历、价格承诺、治疗效果或法律承诺。",
+    "5. 牙科服务、医院环境、住宿、路线、翻译、跨境就诊相关表达要适合真实患者阅读。",
+    "6. 俄语要面向俄罗斯患者自然表达；英语要面向国际访客自然表达。",
+    "",
+    "返回格式：",
+    '{"notes":["翻译说明"],"changes":[{"path":"source.path","value":"翻译后的文本"}]}',
+    "",
+    "sourceTexts:",
+    JSON.stringify(
+      sourceUpdates.map((update) => ({
+        path: update.path,
+        label: update.label,
+        value: truncateText(update.currentValue, 1200),
+      })),
+      null,
+      2,
+    ),
   ].join("\n");
 }
 
@@ -1308,5 +1348,50 @@ export async function generateVisualWebsiteDraft(params: {
       ...parsed.notes,
       `AI 根据${params.screenshots.length ? `${params.screenshots.length} 张截图和` : ""}描述返回 ${parsed.changes.length} 项改动，实际应用 ${applied.appliedPaths.length} 项白名单改动。`,
     ],
+  };
+}
+
+export async function translateWebsiteFromChinese(params: {
+  config: AiConfig;
+  content: CmsContent;
+  targetLanguages: Array<Exclude<Language, "zh">>;
+}): Promise<TranslationDraftResult> {
+  if (params.config.provider === "mock" || !params.config.apiKey.trim()) {
+    return {
+      content: params.content,
+      notes: ["当前 AI 配置未接入真实模型，无法自动翻译中文修改。请先在 AI 配置里接入可用模型。"],
+    };
+  }
+
+  let nextContent = params.content;
+  const notes: string[] = [];
+
+  for (const targetLanguage of params.targetLanguages) {
+    const prompt = buildTranslationPrompt({
+      content: nextContent,
+      targetLanguage,
+    });
+    const raw =
+      params.config.provider === "openai_responses"
+        ? await callResponsesDraft(params.config, prompt)
+        : await callChatDraft(params.config, prompt);
+    const parsed = await parseAiDraftPayloadWithRepair(raw, params.config);
+    const applied = applyChanges({
+      content: nextContent,
+      language: targetLanguage,
+      changes: parsed.changes,
+      mediaLibrary: { folders: [], assets: [] },
+    });
+
+    nextContent = applied.content;
+    notes.push(
+      ...parsed.notes,
+      `${targetLanguage === "ru" ? "俄语" : "英语"}翻译返回 ${parsed.changes.length} 项，实际应用 ${applied.appliedPaths.length} 项。`,
+    );
+  }
+
+  return {
+    content: nextContent,
+    notes,
   };
 }

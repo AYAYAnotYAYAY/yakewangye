@@ -313,6 +313,7 @@ export const visitorLogEventSchema = z.object({
   city: z.string().optional(),
   userAgent: z.string(),
   deviceType: z.string(),
+  deviceModel: z.string().optional(),
   os: z.string(),
   browser: z.string(),
   viewport: z
@@ -348,6 +349,27 @@ export const visitorLogDashboardSchema = z.object({
   topPages: z.array(z.object({ pagePath: z.string(), views: z.number().int().nonnegative() })),
   topReferrers: z.array(z.object({ referrer: z.string(), visits: z.number().int().nonnegative() })),
   topBrowsers: z.array(z.object({ browser: z.string(), sessions: z.number().int().nonnegative() })),
+  topIps: z.array(
+    z.object({
+      ip: z.string(),
+      events: z.number().int().nonnegative(),
+      sessions: z.number().int().nonnegative(),
+      visitors: z.number().int().nonnegative(),
+      pageViews: z.number().int().nonnegative(),
+      latestAt: z.string(),
+      browsers: z.array(z.string()),
+      deviceTypes: z.array(z.string()),
+      deviceModels: z.array(z.string()),
+    }),
+  ),
+  filterOptions: z.object({
+    ips: z.array(z.string()),
+    browsers: z.array(z.string()),
+    deviceTypes: z.array(z.string()),
+    deviceModels: z.array(z.string()),
+    os: z.array(z.string()),
+    pagePaths: z.array(z.string()),
+  }),
   recentEvents: z.array(visitorLogEventSchema),
 });
 

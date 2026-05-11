@@ -29,6 +29,8 @@ import {
   saveContent,
   setupAdmin,
   testAiConfig,
+  translateFromChinese,
+  type VisitorLogFilters,
 } from "../lib/api";
 import type { ReactNode } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
@@ -130,6 +132,14 @@ function formatDwellTime(value: number | undefined) {
   return `${Math.round((value / 60_000) * 10) / 10} 分钟`;
 }
 
+function trimVisitorLogFilters(filters: VisitorLogFilters): VisitorLogFilters {
+  return Object.fromEntries(Object.entries(filters).filter(([, value]) => typeof value === "string" && value.trim())) as VisitorLogFilters;
+}
+
+function formatLogValue(value: string | undefined) {
+  return value?.trim() || "unknown";
+}
+
 function formatAdminError(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
 
@@ -143,6 +153,10 @@ function formatAdminError(error: unknown) {
 
   if (/ai_site_draft_failed|visual_ai_draft_failed|generate_ai_site_draft_failed/i.test(raw)) {
     return "AI 生成失败。请先在“AI 配置”测试连接，确认模型可用；如果你用的是文本模型，请不要上传截图。";
+  }
+
+  if (/ai_translate_from_zh_failed/i.test(raw)) {
+    return "AI 翻译失败。请先在“AI 配置”测试连接，确认模型可用，并适当提高 Max Tokens。";
   }
 
   return raw;
@@ -910,6 +924,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [copyingInstructions, setCopyingInstructions] = useState(false);
   const [generatingAiSiteDraft, setGeneratingAiSiteDraft] = useState(false);
   const [generatingAiVisualDraft, setGeneratingAiVisualDraft] = useState(false);
+  const [translatingFromZh, setTranslatingFromZh] = useState(false);
   const [testingAiConfig, setTestingAiConfig] = useState(false);
   const [showAiApiKey, setShowAiApiKey] = useState(false);
   const [aiSiteInstruction, setAiSiteInstruction] = useState(
@@ -924,6 +939,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [visitorLogs, setVisitorLogs] = useState<VisitorLogDashboard | null>(null);
   const [visitorLogsLoading, setVisitorLogsLoading] = useState(false);
+  const [visitorLogFilters, setVisitorLogFilters] = useState<VisitorLogFilters>({});
   const [mediaLibrary, setMediaLibrary] = useState<MediaLibraryState>({
     folders: [],
     assets: [],
@@ -1041,7 +1057,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     setVisitorLogsLoading(true);
 
     try {
-      setVisitorLogs(await fetchVisitorLogs(adminToken));
+      setVisitorLogs(await fetchVisitorLogs(adminToken, trimVisitorLogFilters(visitorLogFilters)));
     } catch (error) {
       window.alert(`刷新访问日志失败: ${String(error)}`);
     } finally {
@@ -1297,6 +1313,52 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     }
   };
 
+  const handleTranslateZhToRuEn = async () => {
+    const confirmed = window.confirm("将使用当前草稿里的中文主内容，自动生成俄语和英语覆盖层。生成后仍需点击“保存全部内容”才会写入网站。是否继续？");
+
+    if (!confirmed) {
+      return;
+    }
+
+    setTranslatingFromZh(true);
+
+    try {
+      const result = await translateFromChinese(
+        {
+          content: draft,
+          targetLanguages: ["ru", "en"],
+        },
+        adminToken,
+      );
+      setDraft(result.content);
+      window.alert(["已根据中文内容生成俄语和英语草稿。", ...result.notes.map((item) => `- ${item}`)].join("\n"));
+    } catch (error) {
+      window.alert(`中文同步翻译失败：${formatAdminError(error)}`);
+    } finally {
+      setTranslatingFromZh(false);
+    }
+  };
+
+  const updateVisitorLogFilter = (key: keyof VisitorLogFilters, value: string) => {
+    setVisitorLogFilters((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  };
+
+  const clearVisitorLogFilters = async () => {
+    setVisitorLogFilters({});
+    setVisitorLogsLoading(true);
+
+    try {
+      setVisitorLogs(await fetchVisitorLogs(adminToken));
+    } catch (error) {
+      window.alert(`刷新访问日志失败: ${String(error)}`);
+    } finally {
+      setVisitorLogsLoading(false);
+    }
+  };
+
   return (
     <div className="container admin-page">
       <div className="admin-header card">
@@ -1326,6 +1388,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             <div className="entity-note">
               {dirtyLanguageCount ? `未保存语言：${SUPPORTED_LANGUAGES.filter((language) => dirtyLanguages[language]).map((language) => ADMIN_LANGUAGE_LABELS[language]).join(" / ")}` : "当前三种语言都已保存"}
             </div>
+            <button className="button secondary" onClick={handleTranslateZhToRuEn} type="button" disabled={translatingFromZh || saving}>
+              {translatingFromZh ? "翻译中..." : "中文一键翻译 RU/EN"}
+            </button>
           </div>
         </div>
         <div className="admin-header-actions">
@@ -2922,6 +2987,90 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
               </div>
               {visitorLogs ? (
                 <>
+                  <div className="admin-log-filter-panel">
+                    <label className="admin-field">
+                      <span>搜索</span>
+                      <input
+                        value={visitorLogFilters.query ?? ""}
+                        onChange={(event) => updateVisitorLogFilter("query", event.target.value)}
+                        placeholder="IP / 访客 / 页面 / UA"
+                      />
+                    </label>
+                    <label className="admin-field">
+                      <span>IP</span>
+                      <select value={visitorLogFilters.ip ?? ""} onChange={(event) => updateVisitorLogFilter("ip", event.target.value)}>
+                        <option value="">全部 IP</option>
+                        {visitorLogs.filterOptions.ips.map((value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="admin-field">
+                      <span>浏览器</span>
+                      <select value={visitorLogFilters.browser ?? ""} onChange={(event) => updateVisitorLogFilter("browser", event.target.value)}>
+                        <option value="">全部浏览器</option>
+                        {visitorLogs.filterOptions.browsers.map((value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="admin-field">
+                      <span>设备类型</span>
+                      <select value={visitorLogFilters.deviceType ?? ""} onChange={(event) => updateVisitorLogFilter("deviceType", event.target.value)}>
+                        <option value="">全部设备</option>
+                        {visitorLogs.filterOptions.deviceTypes.map((value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="admin-field">
+                      <span>手机/设备型号</span>
+                      <select value={visitorLogFilters.deviceModel ?? ""} onChange={(event) => updateVisitorLogFilter("deviceModel", event.target.value)}>
+                        <option value="">全部型号</option>
+                        {visitorLogs.filterOptions.deviceModels.map((value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="admin-field">
+                      <span>系统</span>
+                      <select value={visitorLogFilters.os ?? ""} onChange={(event) => updateVisitorLogFilter("os", event.target.value)}>
+                        <option value="">全部系统</option>
+                        {visitorLogs.filterOptions.os.map((value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="admin-field">
+                      <span>页面</span>
+                      <select value={visitorLogFilters.pagePath ?? ""} onChange={(event) => updateVisitorLogFilter("pagePath", event.target.value)}>
+                        <option value="">全部页面</option>
+                        {visitorLogs.filterOptions.pagePaths.map((value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="admin-log-filter-actions">
+                      <button className="button primary" onClick={refreshVisitorLogs} type="button" disabled={visitorLogsLoading}>
+                        应用筛选
+                      </button>
+                      <button className="button secondary" onClick={clearVisitorLogFilters} type="button" disabled={visitorLogsLoading}>
+                        清空筛选
+                      </button>
+                    </div>
+                  </div>
                   <div className="admin-log-summary-grid">
                     <div className="card admin-log-metric">
                       <span>访客</span>
@@ -2975,6 +3124,37 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                     </div>
                   </div>
                   <div className="admin-subsection">
+                    <h3>按 IP 合并查看</h3>
+                    <div className="admin-ip-group-grid">
+                      {visitorLogs.topIps.length ? (
+                        visitorLogs.topIps.map((group) => (
+                          <button
+                            key={group.ip}
+                            className="admin-ip-group-card"
+                            onClick={() => {
+                              setVisitorLogFilters((current) => ({ ...current, ip: group.ip }));
+                              setVisitorLogsLoading(true);
+                              fetchVisitorLogs(adminToken, { ...trimVisitorLogFilters(visitorLogFilters), ip: group.ip })
+                                .then(setVisitorLogs)
+                                .catch((error) => window.alert(`筛选 IP 失败: ${String(error)}`))
+                                .finally(() => setVisitorLogsLoading(false));
+                            }}
+                            type="button"
+                          >
+                            <strong>{group.ip}</strong>
+                            <span>
+                              {group.pageViews} 次页面访问 · {group.sessions} 个会话 · {group.visitors} 个访客标识
+                            </span>
+                            <span>{[...group.deviceTypes, ...group.deviceModels, ...group.browsers].filter(Boolean).join(" / ") || "unknown"}</span>
+                            <span>最近：{formatDateTime(group.latestAt)}</span>
+                          </button>
+                        ))
+                      ) : (
+                        <div className="entity-note">当前筛选条件下没有 IP 聚合数据。</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="admin-subsection">
                     <h3>最近访问明细</h3>
                     <div className="admin-log-table-wrap">
                       <table className="admin-log-table">
@@ -3006,7 +3186,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                                 </td>
                                 <td>
                                   <strong>{event.deviceType}</strong>
-                                  <span>{event.os}</span>
+                                  <span>{formatLogValue(event.deviceModel)} / {event.os}</span>
                                 </td>
                                 <td>
                                   <strong>{event.browser}</strong>

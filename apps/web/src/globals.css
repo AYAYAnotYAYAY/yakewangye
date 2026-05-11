@@ -1303,6 +1303,24 @@ h1, h2, h3, h4 {
   margin-top: 16px;
 }
 
+.admin-log-filter-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #f8fafc;
+}
+
+.admin-log-filter-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .admin-log-columns {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -1340,6 +1358,34 @@ h1, h2, h3, h4 {
 }
 
 .admin-log-row span {
+  overflow-wrap: anywhere;
+}
+
+.admin-ip-group-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.admin-ip-group-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.admin-ip-group-card:hover {
+  border-color: var(--primary);
+}
+
+.admin-ip-group-card span {
+  color: var(--muted);
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 
@@ -2266,7 +2312,9 @@ h1, h2, h3, h4 {
   }
 
   .admin-log-summary-grid,
-  .admin-log-columns {
+  .admin-log-columns,
+  .admin-log-filter-panel,
+  .admin-ip-group-grid {
     grid-template-columns: 1fr;
   }
 

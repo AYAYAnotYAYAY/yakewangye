@@ -87,6 +87,28 @@ function detectDeviceType(userAgent: string) {
   return "desktop";
 }
 
+function detectDeviceModel(userAgent: string) {
+  if (/iPhone/i.test(userAgent)) return "iPhone";
+  if (/iPad/i.test(userAgent)) return "iPad";
+  const androidModel = userAgent.match(/Android [^;]+;\s*([^;)]+)\)/i)?.[1]?.trim();
+  if (androidModel) return androidModel.replace(/\s+Build\/.*$/i, "").trim();
+  if (/Macintosh|Mac OS X/i.test(userAgent)) return "Mac";
+  if (/Windows NT/i.test(userAgent)) return "Windows PC";
+  if (/Linux/i.test(userAgent)) return "Linux PC";
+  return "unknown";
+}
+
+const visitorLogQuerySchema = z.object({
+  ip: z.string().optional(),
+  browser: z.string().optional(),
+  deviceType: z.string().optional(),
+  deviceModel: z.string().optional(),
+  os: z.string().optional(),
+  pagePath: z.string().optional(),
+  visitorId: z.string().optional(),
+  query: z.string().optional(),
+});
+
 export async function registerAnalyticsRoutes(app: FastifyInstance) {
   app.post("/api/analytics/events", async (request, reply) => {
     const parsed = analyticsEventSchema.safeParse(request.body);
@@ -111,6 +133,7 @@ export async function registerAnalyticsRoutes(app: FastifyInstance) {
       city: getGeoValue(request, ["x-vercel-ip-city", "x-city", "cloudfront-viewer-city"]),
       userAgent,
       deviceType: detectDeviceType(userAgent),
+      deviceModel: detectDeviceModel(userAgent),
       os: detectOs(userAgent),
       browser: detectBrowser(userAgent),
       createdAt: new Date().toISOString(),
@@ -129,6 +152,15 @@ export async function registerAnalyticsRoutes(app: FastifyInstance) {
       return;
     }
 
-    return visitorLogRepository.dashboard();
+    const parsed = visitorLogQuerySchema.safeParse(request.query);
+
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.flatten(),
+      });
+    }
+
+    return visitorLogRepository.dashboard(parsed.data);
   });
 }

@@ -608,8 +608,19 @@ export async function sendAnalyticsEvent(payload: {
   return (await response.json()) as { ok: true; id: string };
 }
 
-export async function fetchVisitorLogs(token: string) {
-  const response = await fetchWithFallback("/api/admin/visitor-logs", {
+export type VisitorLogFilters = {
+  ip?: string;
+  browser?: string;
+  deviceType?: string;
+  deviceModel?: string;
+  os?: string;
+  pagePath?: string;
+  visitorId?: string;
+  query?: string;
+};
+
+export async function fetchVisitorLogs(token: string, filters: VisitorLogFilters = {}) {
+  const response = await fetchWithFallback(appendQuery("/api/admin/visitor-logs", filters), {
     headers: createAdminHeaders(token),
   });
 
@@ -618,6 +629,27 @@ export async function fetchVisitorLogs(token: string) {
   }
 
   return (await response.json()) as VisitorLogDashboard;
+}
+
+export async function translateFromChinese(payload: { content: CmsContent; targetLanguages: Array<"ru" | "en"> }, token: string) {
+  const response = await fetchWithFallback("/api/admin/ai/translate-from-zh", {
+    method: "POST",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "ai_translate_from_zh_failed"));
+  }
+
+  return (await response.json()) as {
+    ok: true;
+    content: CmsContent;
+    notes: string[];
+  };
 }
 
 export async function testAiConfig(config: AiConfig, token: string) {
