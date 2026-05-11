@@ -25,6 +25,11 @@
 - 本地 Admin 后台
 - 后台登录鉴权
 - AI 提供商和提示词后台配置
+- AI 问诊越界限制
+- AI 改站草稿与差异预览
+- 截图/多图/纯文字 AI 改站
+- 素材库 AI 描述与素材适用范围
+- 访问日志面板
 - 服务端本地聊天记录存储
 - 共享 schema 与种子数据
 - Docker 本地依赖
@@ -35,13 +40,13 @@
 - Admin 移动端横向 tab 与折叠式内容编辑
 - 菜单式运维脚本 `yk.sh`（自动安装为 `yk` 全局命令）
 
-尚未具备：
+尚未具备或仍建议后续增强：
 
-- CMS 集成
-- 数据库存储
-- Telegram Bot 实发
-- 大模型调用
-- 客户线索面板
+- PostgreSQL/对象存储生产化
+- Telegram Bot 全量生产转接策略
+- 视频逐帧理解或视频模型接入
+- 更细角色权限
+- 数据脱敏/日志保留策略后台配置
 
 不要把当前占位接口误判为已完成能力。
 
@@ -137,6 +142,7 @@ corepack pnpm run dev
 - 内容保存到 `data/content.json`
 - 上传文件保存到 `apps/api/uploads/`
 - 聊天记录保存到 `data/chat-sessions.json`
+- 访问日志保存到 `data/visitor-logs.json`
 - 后台现在需要先登录；如果未配置管理员，会先走初始化流程
 - 管理员状态接口：
   - `GET /api/admin/status`
@@ -151,16 +157,33 @@ corepack pnpm run dev
 
 优先事项：
 
-- 在 Web 增加 analytics SDK
-- 采集 page view、session start、session heartbeat、cta click、chat start、telegram click
-- API 端写数据库而不是内存数组
+- 当前已采集 page view/page leave、访客、会话、来源、设备、浏览器、停留时间
+- 下一步应补 CTA click、chat start、telegram click
+- API 端应从本地 JSON 迁移到 PostgreSQL/ClickHouse/日志系统
 
 修改点：
 
-- 新建 `apps/web/lib/analytics.ts`
-- 修改 `apps/api/src/modules/analytics`
+- `apps/web/src/App.tsx`
+- `apps/api/src/modules/analytics`
+- `apps/api/src/lib/storage/visitor-log-repository.ts`
 
-### 3. AI 导诊
+### 3. 素材库 AI 描述
+
+当前素材库支持对图片/视频写入 `aiAnalysis`：
+
+- 图片：优先走视觉模型；如果模型不支持图片，退回元数据分析
+- 视频：当前只做元数据分析，不做逐帧识别
+- AI 改站提示词会读取 `aiAnalysis.summary/tags/suggestedUseCases/placementSuggestions`
+- AI 只能把素材库已有 URL 写入白名单媒体字段
+
+相关文件：
+
+- `packages/shared/src/index.ts`
+- `apps/api/src/lib/admin-ai-gateway.ts`
+- `apps/api/src/modules/admin/routes.ts`
+- `apps/web/src/components/admin-media.tsx`
+
+### 4. AI 导诊
 
 优先事项：
 

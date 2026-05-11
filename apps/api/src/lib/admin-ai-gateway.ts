@@ -956,19 +956,44 @@ export async function analyzeMediaAsset(params: MediaAnalysisInput): Promise<Non
   }
 
   const prompt = buildMediaAssetAnalysisPrompt(params);
-  const raw =
-    params.config.provider === "openai_responses"
-      ? await callResponsesMediaAnalysis(params.config, prompt, isVisionAnalysis ? params.dataUrl : undefined)
-      : await callChatMediaAnalysis(params.config, prompt, isVisionAnalysis ? params.dataUrl : undefined);
+  let raw: string;
+  let source: "vision" | "metadata" = isVisionAnalysis ? "vision" : "metadata";
+  let status: "ready" | "metadata_only" = isVisionAnalysis ? "ready" : "metadata_only";
+  let fallbackNote = "";
+
+  try {
+    raw =
+      params.config.provider === "openai_responses"
+        ? await callResponsesMediaAnalysis(params.config, prompt, isVisionAnalysis ? params.dataUrl : undefined)
+        : await callChatMediaAnalysis(params.config, prompt, isVisionAnalysis ? params.dataUrl : undefined);
+  } catch (error) {
+    if (!isVisionAnalysis) {
+      throw error;
+    }
+
+    source = "metadata";
+    status = "metadata_only";
+    fallbackNote = `视觉识别调用失败，已退回元数据分析：${error instanceof Error ? error.message : String(error)}`;
+    const metadataPrompt = buildMediaAssetAnalysisPrompt({
+      ...params,
+      dataUrl: undefined,
+    });
+    raw =
+      params.config.provider === "openai_responses"
+        ? await callResponsesMediaAnalysis(params.config, metadataPrompt, undefined)
+        : await callChatMediaAnalysis(params.config, metadataPrompt, undefined);
+  }
+
   const parsed = parseMediaAnalysisPayload(raw);
 
   return {
-    status: isVisionAnalysis ? "ready" : "metadata_only",
+    status,
     language: params.language,
     ...parsed,
+    safetyNotes: fallbackNote ? [fallbackNote, ...parsed.safetyNotes] : parsed.safetyNotes,
     analyzedAt: new Date().toISOString(),
     model: params.config.model,
-    source: isVisionAnalysis ? "vision" : "metadata",
+    source,
   };
 }
 

@@ -952,14 +952,14 @@ export async function analyzeMediaAsset(id: string, language: Language, token: s
   return (await response.json()) as { ok: true; asset: MediaLibraryAsset; library: MediaLibraryState };
 }
 
-export async function analyzeAllMediaAssets(language: Language, token: string) {
+export async function analyzeAllMediaAssets(language: Language, token: string, options?: { force?: boolean }) {
   const response = await fetchWithFallback("/api/admin/media-library/ai-analyze-all", {
     method: "POST",
     headers: {
       ...createAdminHeaders(token),
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ language }),
+    body: JSON.stringify({ language, force: Boolean(options?.force) }),
   });
 
   if (!response.ok) {

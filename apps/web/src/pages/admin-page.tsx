@@ -337,6 +337,12 @@ function collectAiCopyDiffs(current: CmsContent, incoming: CmsContent) {
           item.summary,
           next.items[itemIndex]?.summary ?? item.summary,
         );
+        pushDiff(
+          `homePage.sections.${section.id}.items.${itemIndex}.cover`,
+          `首页模块 / ${section.id} / 图册 ${itemIndex + 1} 封面素材`,
+          item.cover,
+          next.items[itemIndex]?.cover ?? item.cover,
+        );
       });
     }
 
@@ -402,6 +408,7 @@ function collectAiCopyDiffs(current: CmsContent, incoming: CmsContent) {
     pushDiff(`articles.${item.id}.content`, `文章 / ${item.id} / 正文`, item.content, next.content);
     pushDiff(`articles.${item.id}.seoTitle`, `文章 / ${item.id} / SEO 标题`, item.seoTitle, next.seoTitle);
     pushDiff(`articles.${item.id}.seoDescription`, `文章 / ${item.id} / SEO 描述`, item.seoDescription, next.seoDescription);
+    pushDiff(`articles.${item.id}.coverImage`, `文章 / ${item.id} / 封面素材`, item.coverImage, next.coverImage);
   });
 
   current.doctors.forEach((item) => {
@@ -419,6 +426,7 @@ function collectAiCopyDiffs(current: CmsContent, incoming: CmsContent) {
       );
     });
     pushDiff(`doctors.${item.id}.experience`, `医生 / ${item.id} / 经验`, item.experience, next.experience);
+    pushDiff(`doctors.${item.id}.image`, `医生 / ${item.id} / 图片`, item.image, next.image);
   });
 
   current.services.forEach((item) => {
@@ -428,6 +436,7 @@ function collectAiCopyDiffs(current: CmsContent, incoming: CmsContent) {
     pushDiff(`services.${item.id}.category`, `服务 / ${item.id} / 分类`, item.category, next.category);
     pushDiff(`services.${item.id}.summary`, `服务 / ${item.id} / 摘要`, item.summary, next.summary);
     pushDiff(`services.${item.id}.details`, `服务 / ${item.id} / 详情`, item.details, next.details);
+    pushDiff(`services.${item.id}.image`, `服务 / ${item.id} / 图片`, item.image, next.image);
   });
 
   current.pricing.forEach((item) => {
@@ -443,6 +452,8 @@ function collectAiCopyDiffs(current: CmsContent, incoming: CmsContent) {
     if (!next) return;
     pushDiff(`gallery.${item.id}.title`, `图册 / ${item.id} / 标题`, item.title, next.title);
     pushDiff(`gallery.${item.id}.summary`, `图册 / ${item.id} / 摘要`, item.summary, next.summary);
+    pushDiff(`gallery.${item.id}.imageUrl`, `图册 / ${item.id} / 素材`, item.imageUrl, next.imageUrl);
+    pushDiff(`gallery.${item.id}.mediaType`, `图册 / ${item.id} / 素材类型`, item.mediaType, next.mediaType);
   });
 
   current.pages.forEach((item) => {
@@ -528,6 +539,7 @@ function applySelectedAiDiffs(current: CmsContent, incoming: CmsContent, selecte
       section.items.forEach((item, itemIndex) => {
         if (has(`homePage.sections.${section.id}.items.${itemIndex}.title`)) item.title = incomingSection.items[itemIndex]?.title ?? item.title;
         if (has(`homePage.sections.${section.id}.items.${itemIndex}.summary`)) item.summary = incomingSection.items[itemIndex]?.summary ?? item.summary;
+        if (has(`homePage.sections.${section.id}.items.${itemIndex}.cover`)) item.cover = incomingSection.items[itemIndex]?.cover ?? item.cover;
       });
     }
 
@@ -558,6 +570,7 @@ function applySelectedAiDiffs(current: CmsContent, incoming: CmsContent, selecte
     if (has(`articles.${item.id}.content`)) item.content = incomingItem.content;
     if (has(`articles.${item.id}.seoTitle`)) item.seoTitle = incomingItem.seoTitle;
     if (has(`articles.${item.id}.seoDescription`)) item.seoDescription = incomingItem.seoDescription;
+    if (has(`articles.${item.id}.coverImage`)) item.coverImage = incomingItem.coverImage;
   });
 
   nextContent.doctors.forEach((item) => {
@@ -572,6 +585,7 @@ function applySelectedAiDiffs(current: CmsContent, incoming: CmsContent, selecte
       }
     });
     if (has(`doctors.${item.id}.experience`)) item.experience = incomingItem.experience;
+    if (has(`doctors.${item.id}.image`)) item.image = incomingItem.image;
   });
 
   nextContent.services.forEach((item) => {
@@ -581,6 +595,7 @@ function applySelectedAiDiffs(current: CmsContent, incoming: CmsContent, selecte
     if (has(`services.${item.id}.category`)) item.category = incomingItem.category;
     if (has(`services.${item.id}.summary`)) item.summary = incomingItem.summary;
     if (has(`services.${item.id}.details`)) item.details = incomingItem.details;
+    if (has(`services.${item.id}.image`)) item.image = incomingItem.image;
   });
 
   nextContent.pricing.forEach((item) => {
@@ -596,6 +611,8 @@ function applySelectedAiDiffs(current: CmsContent, incoming: CmsContent, selecte
     if (!incomingItem) return;
     if (has(`gallery.${item.id}.title`)) item.title = incomingItem.title;
     if (has(`gallery.${item.id}.summary`)) item.summary = incomingItem.summary;
+    if (has(`gallery.${item.id}.imageUrl`)) item.imageUrl = incomingItem.imageUrl;
+    if (has(`gallery.${item.id}.mediaType`)) item.mediaType = incomingItem.mediaType;
   });
 
   nextContent.pages.forEach((item) => {
@@ -802,6 +819,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [generatingAiSiteDraft, setGeneratingAiSiteDraft] = useState(false);
   const [generatingAiVisualDraft, setGeneratingAiVisualDraft] = useState(false);
   const [testingAiConfig, setTestingAiConfig] = useState(false);
+  const [showAiApiKey, setShowAiApiKey] = useState(false);
   const [aiSiteInstruction, setAiSiteInstruction] = useState(
     "根据当前素材库，优化首页首屏、服务卡片、流程说明和图册文案，让网站更像真实牙科门诊官网，并更适合俄罗斯/中国患者咨询转化。",
   );
@@ -1643,16 +1661,27 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                     }))
                   }
                 />
-                <TextField
-                  label="API Key"
-                  value={draft.aiConfig.apiKey}
-                  onChange={(value) =>
-                    setDraft((current) => ({
-                      ...current,
-                      aiConfig: { ...current.aiConfig, apiKey: value },
-                    }))
-                  }
-                />
+                <label className="admin-field admin-secret-field">
+                  <span>API Key</span>
+                  <div className="admin-secret-input">
+                    <input
+                      type={showAiApiKey ? "text" : "password"}
+                      value={draft.aiConfig.apiKey}
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          aiConfig: { ...current.aiConfig, apiKey: event.target.value },
+                        }))
+                      }
+                    />
+                    <button className="button secondary" onClick={() => setShowAiApiKey((current) => !current)} type="button">
+                      {showAiApiKey ? "隐藏" : "显示"}
+                    </button>
+                  </div>
+                  <span className="entity-note">密钥只保存在服务端内容数据里；不要在截图或公开文档里暴露。</span>
+                </label>
                 <TextField
                   label="模型"
                   value={draft.aiConfig.model}
@@ -2785,7 +2814,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
           ) : null}
 
           {activeTab === "media" ? (
-            <MediaLibraryManager library={mediaLibrary} adminToken={adminToken} onLibraryChange={setMediaLibrary} />
+            <MediaLibraryManager library={mediaLibrary} adminToken={adminToken} language={editingLanguage} onLibraryChange={setMediaLibrary} />
           ) : null}
 
           {activeTab === "visitorLogs" ? (

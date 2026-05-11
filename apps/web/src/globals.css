@@ -1402,6 +1402,17 @@ h1, h2, h3, h4 {
   border-color: var(--primary);
 }
 
+.admin-secret-input {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-secret-input .button {
+  min-height: 46px;
+}
+
 .admin-field textarea {
   min-height: 120px;
   resize: vertical;
@@ -1639,6 +1650,63 @@ h1, h2, h3, h4 {
   font-size: 16px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.admin-asset-ai {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(47, 120, 255, 0.18);
+  border-radius: var(--radius-sm);
+  background: #f8fbff;
+}
+
+.admin-asset-ai.pending {
+  border-color: var(--line);
+  background: #fff;
+}
+
+.admin-asset-ai.failed {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: #fff7f7;
+}
+
+.admin-asset-ai-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-asset-ai-head strong {
+  font-size: 13px;
+}
+
+.admin-asset-ai-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-asset-ai p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.admin-asset-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.admin-asset-tags span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #e8f0ff;
+  color: #123d79;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .admin-asset-actions {

@@ -78,6 +78,7 @@ const aiConfigTestSchema = z.object({
 
 const analyzeMediaAssetSchema = z.object({
   language: z.enum(["zh", "ru", "en"]).default("zh"),
+  force: z.boolean().optional().default(false),
 });
 
 const VISUAL_AI_MAX_SCREENSHOT_BYTES = Math.max(1, Number(process.env.VISUAL_AI_MAX_SCREENSHOT_MB ?? 8) || 8) * 1024 * 1024;
@@ -146,8 +147,12 @@ function parseAssetId(request: FastifyRequest) {
   return params.id.trim();
 }
 
-async function buildAssetDataUrl(asset: { storageKey: string; mimeType: string; mediaType: "image" | "video" }) {
+async function buildAssetDataUrl(asset: { storageKey: string; mimeType: string; mediaType: "image" | "video"; size: number }) {
   if (asset.mediaType !== "image") {
+    return undefined;
+  }
+
+  if (asset.size > VISUAL_AI_MAX_SCREENSHOT_BYTES) {
     return undefined;
   }
 
@@ -872,8 +877,11 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const content = await readContent();
     const library = await mediaLibraryRepository.getState();
     const results: Array<{ id: string; ok: boolean; error?: string }> = [];
+    const targets = parsed.data.force
+      ? library.assets
+      : library.assets.filter((asset) => !asset.aiAnalysis || asset.aiAnalysis.status === "failed");
 
-    for (const asset of library.assets) {
+    for (const asset of targets) {
       try {
         const analysis = await analyzeMediaAsset({
           config: content.aiConfig,

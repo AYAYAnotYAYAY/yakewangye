@@ -523,6 +523,7 @@ export function MediaLibraryManager(props: {
   const hasPendingUploads = queueItems.some((item) => item.status === "queued" || item.status === "uploading");
   const allUploadsFinished = queueItems.length > 0 && queueItems.every((item) => item.status === "success" || item.status === "error");
   const analyzedCount = props.library.assets.filter((asset) => asset.aiAnalysis?.status === "ready" || asset.aiAnalysis?.status === "metadata_only").length;
+  const pendingAnalysisCount = props.library.assets.filter((asset) => !asset.aiAnalysis || asset.aiAnalysis.status === "failed").length;
 
   async function handleAnalyzeAsset(asset: MediaLibraryAsset) {
     setAnalyzingIds((current) => [...current, asset.id]);
@@ -543,7 +544,12 @@ export function MediaLibraryManager(props: {
       return;
     }
 
-    if (!window.confirm(`将依次分析 ${props.library.assets.length} 个素材。图片会调用视觉模型，视频会先基于元数据生成适用建议。是否继续？`)) {
+    if (!pendingAnalysisCount) {
+      window.alert("当前素材都已经有 AI 描述。如需重跑，请逐个点击素材卡片里的 AI 分析。");
+      return;
+    }
+
+    if (!window.confirm(`将依次分析 ${pendingAnalysisCount} 个未分析或失败的素材。图片会调用视觉模型，视频会先基于元数据生成适用建议。是否继续？`)) {
       return;
     }
 
@@ -553,7 +559,7 @@ export function MediaLibraryManager(props: {
       const result = await analyzeAllMediaAssets(props.language, props.adminToken);
       props.onLibraryChange(result.library);
       const failedCount = result.results.filter((item) => !item.ok).length;
-      window.alert(`AI 素材分析完成：成功 ${result.results.length - failedCount} 个，失败 ${failedCount} 个。`);
+      window.alert(`AI 素材分析完成：本次处理 ${result.results.length} 个，成功 ${result.results.length - failedCount} 个，失败 ${failedCount} 个。`);
     } catch (error) {
       window.alert(`批量 AI 分析失败: ${String(error)}`);
     } finally {
@@ -722,9 +728,14 @@ export function MediaLibraryManager(props: {
       <div className="admin-toolbar admin-media-toolbar">
         <div>
           <h2>素材库</h2>
-          <p className="entity-note">支持文件夹管理、批量上传、重命名、删除和素材移动。文件夹调整不会破坏已引用的素材地址。</p>
+          <p className="entity-note">
+            支持文件夹管理、批量上传、AI 描述、重命名、删除和素材移动。已分析 {analyzedCount} / {props.library.assets.length} 个素材，待分析 {pendingAnalysisCount} 个。
+          </p>
         </div>
         <div className="admin-media-toolbar-actions">
+          <button className="button secondary" onClick={() => void handleAnalyzeAllAssets()} type="button" disabled={analyzingAll || !pendingAnalysisCount}>
+            {analyzingAll ? "分析中..." : "AI 分析未处理素材"}
+          </button>
           <UploadButton
             label={hasPendingUploads ? "上传进行中" : "批量上传"}
             accept={mediaAcceptValue("all")}
@@ -805,6 +816,40 @@ export function MediaLibraryManager(props: {
                     <div className="entity-note">{asset.fileName}</div>
                     <div className="entity-note">{new Date(asset.updatedAt).toLocaleString()}</div>
                   </div>
+                  {asset.aiAnalysis ? (
+                    <div className={`admin-asset-ai ${asset.aiAnalysis.status === "failed" ? "failed" : ""}`}>
+                      <div className="admin-asset-ai-head">
+                        <strong>
+                          {asset.aiAnalysis.status === "ready"
+                            ? "AI 已理解"
+                            : asset.aiAnalysis.status === "metadata_only"
+                              ? "AI 元数据描述"
+                              : "AI 分析失败"}
+                        </strong>
+                        <span>{new Date(asset.aiAnalysis.analyzedAt).toLocaleString()}</span>
+                      </div>
+                      {asset.aiAnalysis.summary ? <p>{asset.aiAnalysis.summary}</p> : null}
+                      {asset.aiAnalysis.tags.length ? (
+                        <div className="admin-asset-tags">
+                          {asset.aiAnalysis.tags.slice(0, 6).map((tag) => (
+                            <span key={tag}>{tag}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {asset.aiAnalysis.suggestedUseCases.length ? (
+                        <div className="entity-note">适合：{asset.aiAnalysis.suggestedUseCases.slice(0, 2).join(" / ")}</div>
+                      ) : null}
+                      {asset.aiAnalysis.placementSuggestions.length ? (
+                        <div className="entity-note">建议位置：{asset.aiAnalysis.placementSuggestions.slice(0, 2).join(" / ")}</div>
+                      ) : null}
+                      {asset.aiAnalysis.error ? <div className="entity-note">{asset.aiAnalysis.error}</div> : null}
+                    </div>
+                  ) : (
+                    <div className="admin-asset-ai pending">
+                      <strong>未做 AI 素材描述</strong>
+                      <p>分析后，AI 改网站时才能更准确地选择这张图片或视频。</p>
+                    </div>
+                  )}
                   <label className="admin-field compact">
                     <span>移动到文件夹</span>
                     <select value={asset.folderPath} onChange={(event) => void handleMoveAsset(asset, event.target.value)}>
@@ -816,6 +861,14 @@ export function MediaLibraryManager(props: {
                     </select>
                   </label>
                   <div className="admin-asset-actions">
+                    <button
+                      className="button secondary"
+                      onClick={() => void handleAnalyzeAsset(asset)}
+                      type="button"
+                      disabled={analyzingIds.includes(asset.id) || analyzingAll}
+                    >
+                      {analyzingIds.includes(asset.id) ? "分析中..." : "AI 分析"}
+                    </button>
                     <button className="button secondary" onClick={() => void handleRenameAsset(asset)} type="button">
                       重命名
                     </button>

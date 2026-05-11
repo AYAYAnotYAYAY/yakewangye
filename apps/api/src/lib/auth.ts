@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -66,8 +66,34 @@ function decodePayload(raw: string) {
   return JSON.parse(decoded) as AdminTokenPayload;
 }
 
-function hashPassword(password: string) {
+function legacyHashPassword(password: string) {
   return createHash("sha256").update(`${getAdminTokenSecret()}::${password}`).digest("hex");
+}
+
+function hashPasswordForStorage(password: string) {
+  const salt = randomBytes(16).toString("hex");
+  const hash = scryptSync(password, salt, 64).toString("hex");
+  return `scrypt$${salt}$${hash}`;
+}
+
+function verifyPassword(password: string, storedHash: string) {
+  if (storedHash.startsWith("scrypt$")) {
+    const [, salt, hash] = storedHash.split("$");
+
+    if (!salt || !hash) {
+      return false;
+    }
+
+    const incoming = scryptSync(password, salt, 64);
+    const expected = Buffer.from(hash, "hex");
+    return incoming.length === expected.length && timingSafeEqual(incoming, expected);
+  }
+
+  const incomingHash = legacyHashPassword(password);
+  return (
+    incomingHash.length === storedHash.length &&
+    timingSafeEqual(Buffer.from(incomingHash), Buffer.from(storedHash))
+  );
 }
 
 async function readAdminFileConfig() {
@@ -96,7 +122,7 @@ async function resolveAdminCredentialSource(): Promise<AdminCredentialSource> {
       initialized: true,
       source: "env",
       username: envUsername,
-      passwordHash: hashPassword(envPassword),
+      passwordHash: legacyHashPassword(envPassword),
     };
   }
 
@@ -152,7 +178,7 @@ export async function initializeAdminCredentials(username: string, password: str
   const now = new Date().toISOString();
   await writeAdminFileConfig({
     username,
-    passwordHash: hashPassword(password),
+    passwordHash: hashPasswordForStorage(password),
     createdAt: now,
     updatedAt: now,
   });
@@ -173,13 +199,7 @@ export async function validateAdminCredentials(username: string, password: strin
     };
   }
 
-  const incomingHash = hashPassword(password);
-
-  if (
-    username === resolved.username &&
-    incomingHash.length === resolved.passwordHash.length &&
-    timingSafeEqual(Buffer.from(incomingHash), Buffer.from(resolved.passwordHash))
-  ) {
+  if (username === resolved.username && verifyPassword(password, resolved.passwordHash)) {
     return {
       ok: true as const,
       username: resolved.username,

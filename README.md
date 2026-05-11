@@ -12,7 +12,12 @@
 
 - React + Vite 前台骨架
 - Fastify API 骨架
-- 本地可用的 Admin 后台最小版
+- 本地可用的 Admin 后台
+- 可视化首页文字编辑
+- AI 问诊、AI 改内容、截图/多图改站
+- 素材库管理与素材 AI 描述
+- 访问日志面板
+- 后台备份恢复与 `yk.sh` 全量备份
 - 共享 schema / 种子数据
 - Docker 本地依赖（PostgreSQL / Redis / Metabase）
 - 架构文档与 AI 维护文档
@@ -30,7 +35,7 @@ corepack pnpm run dev
 
 - 前台：`http://localhost:3000`
 - 后台：`http://localhost:3000/admin`
-- API：`http://localhost:4000/health`
+- API 健康检查：`http://localhost:4000/health`
 - Metabase：`http://localhost:3001`
 
 ## 生产部署注意事项
@@ -59,6 +64,7 @@ docs/
 
 - [架构说明](./docs/architecture.md)
 - [AI 维护说明](./docs/ai-maintenance.md)
+- [后台运营与 AI 使用说明](./docs/admin-operations.md)
 
 ## 说明
 
@@ -68,3 +74,5 @@ docs/
 - 内容、AI 配置、管理员配置、聊天记录、素材库索引和上传文件都会写入独立数据目录，而不是写死在代码仓库里。
 - 老版本放在仓库内的 `data/` 与 `apps/api/uploads/` 会在首次启动时自动迁移到新的本地数据目录。
 - 后台所有媒体字段都支持三种来源：直接填 URL、本地上传、从素材库选择；上传后的图片和视频会自动进入素材库复用。
+- 素材库可以给每个图片/视频保存 AI 描述和适用范围，AI 改站时会读取这些分析结果来选择素材。
+- 访问日志会记录前台访客 IP、浏览器、设备、来源和停留时间；正式上线请同步隐私说明。
