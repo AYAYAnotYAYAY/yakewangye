@@ -148,11 +148,40 @@ function formatAdminError(error: unknown) {
   return raw;
 }
 
-function buildExternalAiInstructions(content: CmsContent) {
+function compactInstructionText(value: string | undefined, maxLength: number) {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function buildExternalAiMediaAssets(library: MediaLibraryState) {
+  return [...library.assets]
+    .sort((left, right) => {
+      const score = (asset: MediaLibraryState["assets"][number]) =>
+        asset.aiAnalysis?.status === "ready" ? 3 : asset.aiAnalysis?.status === "metadata_only" ? 2 : asset.aiAnalysis ? 1 : 0;
+      return score(right) - score(left) || right.updatedAt.localeCompare(left.updatedAt);
+    })
+    .slice(0, 40)
+    .map((asset) => ({
+      title: asset.title,
+      url: asset.url,
+      mediaType: asset.mediaType,
+      folderPath: compactInstructionText(asset.folderPath, 80),
+      aiSummary: compactInstructionText(asset.aiAnalysis?.summary, 160),
+      visualDescription: compactInstructionText(asset.aiAnalysis?.visualDescription, 260),
+      tags: (asset.aiAnalysis?.tags ?? []).slice(0, 10).map((item) => compactInstructionText(item, 30)),
+      suggestedUseCases: (asset.aiAnalysis?.suggestedUseCases ?? []).slice(0, 5).map((item) => compactInstructionText(item, 90)),
+      placementSuggestions: (asset.aiAnalysis?.placementSuggestions ?? []).slice(0, 5).map((item) => compactInstructionText(item, 90)),
+      patientFacingCaption: compactInstructionText(asset.aiAnalysis?.patientFacingCaption, 120),
+      analysisStatus: asset.aiAnalysis?.status ?? "not_analyzed",
+    }));
+}
+
+function buildExternalAiInstructions(content: CmsContent, mediaLibrary: MediaLibraryState) {
   const contact = content.siteSettings.primaryContact;
+  const mediaAssets = buildExternalAiMediaAssets(mediaLibrary);
 
   return [
-    "你现在是这个网站的文案优化助手。",
+    "你现在是这个牙科门诊网站的 AI 改站助手，不只是文案润色助手。",
     "",
     "网站类型：牙科诊所/门诊官网，目标是让访客先理解诊所实力和服务范围，再发起咨询并转到 Telegram 或人工沟通。",
     `品牌名称：${content.siteSettings.brandName}`,
@@ -161,26 +190,32 @@ function buildExternalAiInstructions(content: CmsContent) {
     `Telegram：${contact.telegramHandle} ${contact.telegramUrl}`.trim(),
     "",
     "你的任务：",
-    "1. 先浏览同类牙科诊所、口腔门诊、跨境医疗咨询网站，研究他们的首页介绍、服务介绍、医生介绍、价格说明、信任表达和行动号召写法。",
-    "2. 再根据我提供的 JSON 内容，对本站文案进行重写，让它更专业、更可信、更像真实医疗服务网站，并且更适合咨询转化。",
-    "3. 本站采用三语结构：中文是主基底语言，俄语和英语写在 contentSnapshot.i18n.ru / contentSnapshot.i18n.en 覆盖层。",
-    "4. 输出时保留原 JSON 结构，返回完整 JSON，只修改适合改写的文字内容。",
-    "5. 中文文案写回 contentSnapshot 主结构；俄语、英语文案分别写回 contentSnapshot.i18n.ru / contentSnapshot.i18n.en 中对应字段。",
-    "6. 注意：系统导回时只接受白名单内的文案字段，电话、地址、链接、配置、素材等字段即使被改也会被忽略。",
+    "1. 先理解 contentSnapshot 当前网站结构，再阅读 mediaAssets 中每个素材的 AI 标注、视觉描述、适用场景和建议位置。",
+    "2. 根据素材 AI 标注判断素材应该服务于哪个网站模块：牙科服务、医院环境、住宿环境、路线/翻译/跨境就诊支持、医生/团队、文章封面或图册展示。",
+    "3. 如果素材明显代表一个当前 services 列表没有覆盖的新服务或服务场景，应该在 contentSnapshot.services 里新增一项服务，并使用该素材 URL 作为 image，再为这个服务写好 name/category/summary/details。",
+    "4. 如果素材更适合展示医院环境、设备、住宿环境、路线说明或视频，不要硬塞到服务里，应该在 contentSnapshot.gallery 里新增一项图册/视频展示，并写好 title/summary/imageUrl/mediaType。",
+    "5. 如果素材适合替换已有服务、医生、文章或图册的图片，可以把对应字段替换为 mediaAssets 中已有的 url；不要编造任何新 URL。",
+    "6. 对已有文案进行重写，让它更专业、更可信、更像真实医疗服务网站，并且更适合咨询转化。",
+    "7. 本站采用三语结构：中文是主基底语言，俄语和英语写在 contentSnapshot.i18n.ru / contentSnapshot.i18n.en 覆盖层。",
+    "8. 中文文案写回 contentSnapshot 主结构；俄语、英语文案分别写回 contentSnapshot.i18n.ru / contentSnapshot.i18n.en 中对应字段。",
+    "9. 输出时返回完整 JSON，保留原有顶层结构。允许新增 services/gallery 数组项；不要新增其他顶层字段。",
     "",
     "重点优化方向：",
     "- 首页标题、副标题、卖点、行动按钮文案",
-    "- 服务项目介绍",
+    "- 服务项目介绍，尤其是根据素材 AI 标注补齐缺失服务",
     "- 医生介绍和信任表达",
+    "- 图册/视频展示，把医院环境、治疗场景、住宿环境、路线支持素材用起来",
     "- 页面正文、文章摘要、SEO 标题和 SEO 描述",
     "- 跨境就诊、咨询流程、联系方式引导",
     "",
     "严格禁止：",
-    "- 不要修改 JSON 结构",
+    "- 不要修改顶层 JSON 结构",
     "- 不要删除或新增顶层字段",
-    "- 不要修改 id、slug、href、url、图片地址、视频地址、fileName、storageKey",
+    "- 不要修改现有 id、slug、href、fileName、storageKey",
+    "- 不要编造图片地址或视频地址；新增/替换素材只能使用 mediaAssets 中已有 url",
     "- 不要随意编造电话、地址、医生资历、价格、治疗效果、法律承诺",
     "- 不要修改管理员配置、AI 接口配置、聊天记录、素材信息",
+    "- 不要把与牙科、门诊、住宿、路线、翻译、跨境就诊无关的素材强行用于网站",
     "",
     "事实信息默认保持不变：",
     `- 品牌名：${content.siteSettings.brandName}`,
@@ -194,8 +229,13 @@ function buildExternalAiInstructions(content: CmsContent) {
     "- 中文主内容放在 contentSnapshot 主结构里",
     "- 俄语放在 contentSnapshot.i18n.ru",
     "- 英语放在 contentSnapshot.i18n.en",
-    "- 只改适合改写的文案字段",
+    "- 可以新增 contentSnapshot.services[] 或 contentSnapshot.gallery[] 数组项",
+    "- 新增服务必须包含 id、name、category、summary、details、image；id 用 service-ai-短英文或拼音关键词，image 必须是 mediaAssets 中的图片 URL",
+    "- 新增图册必须包含 id、title、summary、imageUrl、mediaType；id 用 gallery-ai-短英文或拼音关键词，imageUrl 必须是 mediaAssets 中的图片或视频 URL，mediaType 要与素材一致",
     "- 文案要与牙科门诊网站场景匹配，不能写成别的行业",
+    "",
+    "可用素材 AI 标注 mediaAssets：",
+    JSON.stringify(mediaAssets, null, 2),
   ].join("\n");
 }
 
@@ -456,6 +496,16 @@ function collectAiCopyDiffs(current: CmsContent, incoming: CmsContent) {
     pushDiff(`services.${item.id}.details`, `服务 / ${item.id} / 详情`, item.details, next.details);
     pushDiff(`services.${item.id}.image`, `服务 / ${item.id} / 图片`, item.image, next.image);
   });
+  incoming.services
+    .filter((item) => !current.services.some((candidate) => candidate.id === item.id))
+    .forEach((item) => {
+      pushDiff(
+        `services.${item.id}.__create`,
+        `服务 / 新增 / ${item.name}`,
+        "",
+        [`分类：${item.category}`, `摘要：${item.summary}`, `详情：${item.details}`, `素材：${item.image}`].join("\n"),
+      );
+    });
 
   current.pricing.forEach((item) => {
     const next = incoming.pricing.find((candidate) => candidate.id === item.id);
@@ -473,6 +523,16 @@ function collectAiCopyDiffs(current: CmsContent, incoming: CmsContent) {
     pushDiff(`gallery.${item.id}.imageUrl`, `图册 / ${item.id} / 素材`, item.imageUrl, next.imageUrl);
     pushDiff(`gallery.${item.id}.mediaType`, `图册 / ${item.id} / 素材类型`, item.mediaType, next.mediaType);
   });
+  incoming.gallery
+    .filter((item) => !current.gallery.some((candidate) => candidate.id === item.id))
+    .forEach((item) => {
+      pushDiff(
+        `gallery.${item.id}.__create`,
+        `图册 / 新增 / ${item.title}`,
+        "",
+        [`说明：${item.summary}`, `素材：${item.imageUrl}`, `类型：${item.mediaType}`].join("\n"),
+      );
+    });
 
   current.pages.forEach((item) => {
     const next = incoming.pages.find((candidate) => candidate.id === item.id);
@@ -615,6 +675,13 @@ function applySelectedAiDiffs(current: CmsContent, incoming: CmsContent, selecte
     if (has(`services.${item.id}.details`)) item.details = incomingItem.details;
     if (has(`services.${item.id}.image`)) item.image = incomingItem.image;
   });
+  incoming.services
+    .filter((item) => !nextContent.services.some((candidate) => candidate.id === item.id))
+    .forEach((item) => {
+      if (has(`services.${item.id}.__create`)) {
+        nextContent.services.push(item);
+      }
+    });
 
   nextContent.pricing.forEach((item) => {
     const incomingItem = incoming.pricing.find((candidate) => candidate.id === item.id);
@@ -632,6 +699,13 @@ function applySelectedAiDiffs(current: CmsContent, incoming: CmsContent, selecte
     if (has(`gallery.${item.id}.imageUrl`)) item.imageUrl = incomingItem.imageUrl;
     if (has(`gallery.${item.id}.mediaType`)) item.mediaType = incomingItem.mediaType;
   });
+  incoming.gallery
+    .filter((item) => !nextContent.gallery.some((candidate) => candidate.id === item.id))
+    .forEach((item) => {
+      if (has(`gallery.${item.id}.__create`)) {
+        nextContent.gallery.push(item);
+      }
+    });
 
   nextContent.pages.forEach((item) => {
     const incomingItem = incoming.pages.find((candidate) => candidate.id === item.id);
@@ -856,7 +930,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   });
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
   const aiCopyFileInputRef = useRef<HTMLInputElement | null>(null);
-  const externalAiInstructions = buildExternalAiInstructions(draft);
+  const externalAiInstructions = buildExternalAiInstructions(draft, mediaLibrary);
   const localizedDraft = useMemo(() => resolveContentForLanguage(draft, editingLanguage), [draft, editingLanguage]);
   const isLocalizedEditing = editingLanguage !== DEFAULT_LANGUAGE;
   const dirtyLanguages = useMemo(() => {

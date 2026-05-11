@@ -2,6 +2,8 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import path from "node:path";
 import {
   type CmsContent,
+  type MediaLibraryAsset,
+  type MediaLibraryState,
   chatSessionSchema,
   cmsContentSchema,
   cmsContentSeed,
@@ -100,6 +102,23 @@ const aiCopyPackageSchema = z.object({
     ),
   }),
   promptTemplate: z.string(),
+  mediaAssetsForAi: z
+    .array(
+      z.object({
+        title: z.string(),
+        url: z.string(),
+        mediaType: z.enum(["image", "video"]),
+        folderPath: z.string(),
+        aiSummary: z.string(),
+        visualDescription: z.string(),
+        tags: z.array(z.string()),
+        suggestedUseCases: z.array(z.string()),
+        placementSuggestions: z.array(z.string()),
+        patientFacingCaption: z.string(),
+        analysisStatus: z.string(),
+      }),
+    )
+    .default([]),
   contentSnapshot: cmsContentSchema,
 });
 
@@ -185,21 +204,53 @@ function summarizeBusiness(content: z.infer<typeof cmsContentSchema>) {
 
 function buildAiPromptTemplate(content: z.infer<typeof cmsContentSchema>) {
   return [
-    "你正在为一个真实线上网站改写文案。",
+    "你正在为一个真实线上牙科门诊网站改内容和排版素材，不只是改写文案。",
     `品牌名：${content.siteSettings.brandName}`,
-    "你的任务：先参考同类牙科/医疗服务网站的介绍方式，再重写这个网站的首页、服务、文章摘要和页面介绍文案。",
+    "你的任务：先参考同类牙科/医疗服务网站的介绍方式，再结合 mediaAssetsForAi 的素材 AI 标注，重写这个网站的首页、服务、文章摘要、页面介绍，并把素材用到合适位置。",
+    "如果素材 AI 标注显示它代表当前 services 没有覆盖的新服务或新服务场景，可以在 contentSnapshot.services 新增服务项，并使用素材 URL 作为 image。",
+    "如果素材更适合医院环境、治疗场景、住宿环境、路线/翻译支持、设备或视频展示，可以在 contentSnapshot.gallery 新增图册项。",
     "这个站点使用三语内容结构：中文是主基底语言，俄语和英语写在 contentSnapshot.i18n.ru / contentSnapshot.i18n.en 覆盖层。",
     "中文文案写回 contentSnapshot 主结构；俄语、英语文案分别写回各自的 i18n 覆盖层。",
-    "必须遵守：不要改 JSON 结构、不要改 id/slug/url/电话号码/地址/Telegram/价格数值/素材链接，除非字段本身就是纯介绍文案。",
+    "必须遵守：不要改顶层 JSON 结构、不要改现有 id/slug/url/电话号码/地址/Telegram/价格数值；新增或替换素材只能使用 mediaAssetsForAi 中已有 URL。",
+    "新增服务必须包含 id、name、category、summary、details、image；新增图册必须包含 id、title、summary、imageUrl、mediaType。",
     "注意：系统恢复时只接受白名单中的文案字段，其他字段就算改了也会被自动忽略。",
     "优先优化：信任感、专业度、跨境就诊说明、咨询转化率、语言自然度。",
     "输出要求：返回完整 JSON，结构必须与输入完全一致，只改适合改写的文字字段。",
   ].join("\n");
 }
 
-function createAiCopyPackage(params: { content: z.infer<typeof cmsContentSchema>; dataRoot: string }) {
-  const { content, dataRoot } = params;
+function compactAiCopyText(value: string | undefined, maxLength: number) {
+  const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function buildAiCopyMediaAssets(mediaLibrary: MediaLibraryState) {
+  return [...mediaLibrary.assets]
+    .sort((left: MediaLibraryAsset, right: MediaLibraryAsset) => {
+      const score = (asset: MediaLibraryAsset) =>
+        asset.aiAnalysis?.status === "ready" ? 3 : asset.aiAnalysis?.status === "metadata_only" ? 2 : asset.aiAnalysis ? 1 : 0;
+      return score(right) - score(left) || right.updatedAt.localeCompare(left.updatedAt);
+    })
+    .slice(0, 60)
+    .map((asset) => ({
+      title: asset.title,
+      url: asset.url,
+      mediaType: asset.mediaType,
+      folderPath: compactAiCopyText(asset.folderPath, 80),
+      aiSummary: compactAiCopyText(asset.aiAnalysis?.summary, 160),
+      visualDescription: compactAiCopyText(asset.aiAnalysis?.visualDescription, 260),
+      tags: (asset.aiAnalysis?.tags ?? []).slice(0, 10).map((item) => compactAiCopyText(item, 30)),
+      suggestedUseCases: (asset.aiAnalysis?.suggestedUseCases ?? []).slice(0, 5).map((item) => compactAiCopyText(item, 90)),
+      placementSuggestions: (asset.aiAnalysis?.placementSuggestions ?? []).slice(0, 5).map((item) => compactAiCopyText(item, 90)),
+      patientFacingCaption: compactAiCopyText(asset.aiAnalysis?.patientFacingCaption, 120),
+      analysisStatus: asset.aiAnalysis?.status ?? "not_analyzed",
+    }));
+}
+
+function createAiCopyPackage(params: { content: z.infer<typeof cmsContentSchema>; mediaLibrary: MediaLibraryState; dataRoot: string }) {
+  const { content, mediaLibrary, dataRoot } = params;
   const contact = content.siteSettings.primaryContact;
+  const mediaAssetsForAi = buildAiCopyMediaAssets(mediaLibrary);
 
   return aiCopyPackageSchema.parse({
     format: AI_COPY_FORMAT,
@@ -222,15 +273,16 @@ function createAiCopyPackage(params: { content: z.infer<typeof cmsContentSchema>
         `联系电话：${contact.phone}`,
         `地址：${contact.address}`,
         `Telegram：${contact.telegramHandle} / ${contact.telegramUrl}`,
-        "所有 id、slug、URL、图片地址、视频地址、价格数字、联系方式默认不改",
+        "现有 id、slug、URL、价格数字、联系方式默认不改；新增或替换素材只能使用 mediaAssetsForAi 中已有 URL",
       ],
     },
     workflow: {
       objective: "参考其他同类网站后，重写更匹配本站定位的介绍文案，并返回可直接导回本系统的内容 JSON。",
       suggestedSteps: [
         "先理解 siteProfile，明确这是牙科诊所营销站而不是纯资讯站。",
+        "阅读 mediaAssetsForAi，根据素材 AI 标注判断哪些素材应该新增服务，哪些应该新增图册/视频展示。",
         "浏览同类牙科/门诊网站，提炼他们的首页卖点、服务介绍、信任表达和行动号召。",
-        "基于 contentSnapshot 改写标题、描述、摘要、正文等纯文案字段。",
+        "基于 contentSnapshot 改写标题、描述、摘要、正文等文案字段，并在必要时新增 services/gallery 数组项。",
         "中文写回 contentSnapshot 主结构，俄语和英语分别写回 contentSnapshot.i18n.ru / contentSnapshot.i18n.en。",
         "保留结构和事实信息，输出完整 JSON。",
       ],
@@ -240,12 +292,16 @@ function createAiCopyPackage(params: { content: z.infer<typeof cmsContentSchema>
       allowedOperations: [
         "改写首页标题、副标题、说明文字和 CTA 文案",
         "改写服务介绍、医生简介、文章摘要与页面正文",
+        "根据素材 AI 标注新增缺失的服务项目",
+        "根据素材 AI 标注新增医院环境、住宿环境、路线/翻译支持、视频等图册展示",
+        "把 mediaAssetsForAi 中已有素材 URL 用到合适图片/视频字段",
         "优化 SEO 标题和 SEO 描述",
         "统一语言风格，让文案更专业、更可信、更适合转化",
       ],
       forbiddenOperations: [
         "不要删除或新增顶层字段",
-        "不要修改任何 id、slug、href、url、fileName、storageKey",
+        "不要修改任何现有 id、slug、href、fileName、storageKey",
+        "不要编造图片或视频 URL",
         "不要随意编造电话号码、地址、医生资历、价格、治疗结果或法律承诺",
         "不要改写管理配置、素材文件、聊天记录或管理员信息",
         "白名单之外的改动在系统导入时会被自动忽略",
@@ -255,7 +311,8 @@ function createAiCopyPackage(params: { content: z.infer<typeof cmsContentSchema>
         { path: "siteSettings.primaryContact.*", instruction: "联系方式和地址默认保持不变。" },
         { path: "homePage.sections[*].title/description/actions[*].label", instruction: "这些是优先优化的转化文案。" },
         { path: "articles[*].title/summary/content", instruction: "可根据竞品风格重写，但要与牙科场景匹配。" },
-        { path: "services[*].title/summary", instruction: "可重写为更像真实门诊服务介绍。" },
+        { path: "services[*]", instruction: "可重写现有服务；当 mediaAssetsForAi 表明存在未覆盖的新服务时，可以新增服务项。" },
+        { path: "gallery[*]", instruction: "可重写现有图册；当素材适合展示医院环境、住宿、路线或视频时，可以新增图册项。" },
         { path: "doctors[*].name/title/bio", instruction: "可润色表达，但不要虚构资历。" },
         { path: "pages[*].title/summary/content/seoTitle/seoDescription", instruction: "可全面重写。" },
         { path: "i18n.ru / i18n.en", instruction: "俄语和英语文案应写入各自的多语言覆盖层，结构与主内容对应。" },
@@ -263,6 +320,7 @@ function createAiCopyPackage(params: { content: z.infer<typeof cmsContentSchema>
       ],
     },
     promptTemplate: buildAiPromptTemplate(content),
+    mediaAssetsForAi,
     contentSnapshot: content,
   });
 }
@@ -381,7 +439,37 @@ function sanitizePageSections(current: CmsContent["homePage"]["sections"], incom
   });
 }
 
-function sanitizeAiCopyContent(current: CmsContent, incoming: CmsContent): CmsContent {
+function sanitizeAiCopyContent(current: CmsContent, incoming: CmsContent, mediaAssetsForAi: AiCopyPackage["mediaAssetsForAi"] = []): CmsContent {
+  const mediaByUrl = new Map(mediaAssetsForAi.map((asset) => [asset.url, asset]));
+  const imageOrCurrent = (incomingUrl: string | undefined, currentUrl: string) =>
+    incomingUrl && mediaByUrl.get(incomingUrl)?.mediaType === "image" ? incomingUrl : currentUrl;
+  const galleryMediaOrCurrent = (incomingUrl: string | undefined, currentUrl: string) =>
+    incomingUrl && mediaByUrl.has(incomingUrl) ? incomingUrl : currentUrl;
+  const currentServiceIds = new Set(current.services.map((item) => item.id));
+  const currentGalleryIds = new Set(current.gallery.map((item) => item.id));
+  const newServices = incoming.services
+    .filter((item) => !currentServiceIds.has(item.id) && mediaByUrl.get(item.image)?.mediaType === "image")
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      category: item.category,
+      summary: item.summary,
+      details: item.details,
+      image: item.image,
+    }));
+  const newGallery = incoming.gallery
+    .filter((item) => !currentGalleryIds.has(item.id) && mediaByUrl.has(item.imageUrl))
+    .map((item) => {
+      const asset = mediaByUrl.get(item.imageUrl);
+      return {
+        id: item.id,
+        title: item.title,
+        summary: item.summary,
+        imageUrl: item.imageUrl,
+        mediaType: asset?.mediaType ?? item.mediaType,
+      };
+    });
+
   return {
     ...current,
     siteSettings: {
@@ -425,7 +513,8 @@ function sanitizeAiCopyContent(current: CmsContent, incoming: CmsContent): CmsCo
       category: incoming.services[index]?.category ?? item.category,
       summary: incoming.services[index]?.summary ?? item.summary,
       details: incoming.services[index]?.details ?? item.details,
-    })),
+      image: imageOrCurrent(incoming.services[index]?.image, item.image),
+    })).concat(newServices),
     pricing: current.pricing.map((item, index) => ({
       ...item,
       name: incoming.pricing[index]?.name ?? item.name,
@@ -436,7 +525,9 @@ function sanitizeAiCopyContent(current: CmsContent, incoming: CmsContent): CmsCo
       ...item,
       title: incoming.gallery[index]?.title ?? item.title,
       summary: incoming.gallery[index]?.summary ?? item.summary,
-    })),
+      imageUrl: galleryMediaOrCurrent(incoming.gallery[index]?.imageUrl, item.imageUrl),
+      mediaType: mediaByUrl.get(incoming.gallery[index]?.imageUrl ?? "")?.mediaType ?? item.mediaType,
+    })).concat(newGallery),
     pages: current.pages.map((item, index) => ({
       ...item,
       title: incoming.pages[index]?.title ?? item.title,
@@ -511,9 +602,14 @@ export async function serializeBackupBundle() {
 export async function createAiCopyPackageBundle() {
   const paths = getLocalStoragePaths();
   await ensureContentStorage();
-  const content = await readJsonFile(paths.contentFilePath, cmsContentSchema, cmsContentSeed);
+  await ensureMediaLibraryStorage();
+  const [content, mediaLibrary] = await Promise.all([
+    readJsonFile(paths.contentFilePath, cmsContentSchema, cmsContentSeed),
+    readJsonFile(paths.mediaLibraryFilePath, mediaLibraryStateSchema, mediaLibraryStateSchema.parse({ folders: [], assets: [] })),
+  ]);
   return createAiCopyPackage({
     content: content.i18n ? content : { ...content, i18n: cmsContentSeed.i18n },
+    mediaLibrary,
     dataRoot: paths.dataRoot,
   });
 }
@@ -572,7 +668,7 @@ export async function restoreAiCopyPackage(rawInput: string | Buffer) {
   const bundle = aiCopyPackageSchema.parse(JSON.parse(rawText));
   const paths = getLocalStoragePaths();
   const currentContent = await readJsonFile(paths.contentFilePath, cmsContentSchema, cmsContentSeed);
-  const sanitizedContent = sanitizeAiCopyContent(currentContent, bundle.contentSnapshot);
+  const sanitizedContent = sanitizeAiCopyContent(currentContent, bundle.contentSnapshot, bundle.mediaAssetsForAi);
 
   await mkdir(paths.dataRoot, { recursive: true });
   await writeBackupJsonFile(

@@ -407,7 +407,9 @@ Metabase 地址：
 服务端白名单限制：
 
 - 只允许 AI 修改 `admin-ai-gateway.ts` 中 `buildAllowedUpdates` 列出的 path
+- 允许两个受控新增动作：`create.services` 新增服务，`create.gallery` 新增图册/视频展示
 - 媒体字段只能引用素材库已有 URL
+- 新增服务的 `image` 必须来自素材库图片；新增图册的 `imageUrl` 可以来自素材库图片或视频，并会自动校正 `mediaType`
 - 图册素材会同步校正 `mediaType`
 - 电话、地址、Telegram、API Key、模型配置、id、slug、href 不允许被 AI 改写
 

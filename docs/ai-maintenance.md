@@ -175,6 +175,7 @@ corepack pnpm run dev
 - 视频：当前只做元数据分析，不做逐帧识别
 - AI 改站提示词会读取 `aiAnalysis.summary/tags/suggestedUseCases/placementSuggestions`
 - AI 只能把素材库已有 URL 写入白名单媒体字段
+- 若素材 AI 标注显示存在当前网站未覆盖的新服务或展示场景，AI 改站可以通过 `create.services` 新增服务，或通过 `create.gallery` 新增图册/视频展示；这些新增项仍会进入后台差异预览，由管理员勾选后才应用。
 
 相关文件：
 

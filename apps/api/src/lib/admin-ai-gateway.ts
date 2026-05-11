@@ -32,11 +32,25 @@ const aiDraftSchema = z.object({
     .array(
       z.object({
         path: z.string().trim().min(1),
-        value: z.string(),
+        value: z.unknown(),
       }),
     )
     .max(120)
     .default([]),
+});
+
+const createServiceValueSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  category: z.string().trim().min(1).max(60),
+  summary: z.string().trim().min(1).max(260),
+  details: z.string().trim().min(1).max(900),
+  image: z.string().trim().min(1),
+});
+
+const createGalleryValueSchema = z.object({
+  title: z.string().trim().min(1).max(90),
+  summary: z.string().trim().min(1).max(260),
+  imageUrl: z.string().trim().min(1),
 });
 
 const mediaAssetAnalysisSchema = z.object({
@@ -83,7 +97,16 @@ function deepMerge(base: unknown, override: unknown): unknown {
       return base;
     }
 
-    return base.map((item, index) => deepMerge(item, override[index]));
+    const length = Math.max(base.length, override.length);
+    return Array.from({ length }, (_, index) => {
+      if (!(index in override)) {
+        return base[index];
+      }
+      if (!(index in base)) {
+        return override[index];
+      }
+      return deepMerge(base[index], override[index]);
+    });
   }
 
   if (base && typeof base === "object") {
@@ -363,10 +386,41 @@ function normalizeMediaValue(value: string, update: AllowedUpdate, mediaUrls: Se
   return update.kind === "gallery_cover" ? `url("${extractedUrl}") center/cover` : extractedUrl;
 }
 
+function normalizeChangeTextValue(value: unknown) {
+  return typeof value === "string" ? value : null;
+}
+
+function parseCreateValue(value: unknown) {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function createContentId(prefix: string, existingIds: Set<string>, index: number) {
+  const timestamp = Date.now().toString(36);
+  let candidate = `${prefix}-ai-${timestamp}-${index + 1}`;
+  let suffix = 2;
+
+  while (existingIds.has(candidate)) {
+    candidate = `${prefix}-ai-${timestamp}-${index + 1}-${suffix}`;
+    suffix += 1;
+  }
+
+  existingIds.add(candidate);
+  return candidate;
+}
+
 function applyChanges(params: {
   content: CmsContent;
   language: Language;
-  changes: Array<{ path: string; value: string }>;
+  changes: Array<{ path: string; value?: unknown }>;
   mediaLibrary: MediaLibraryState;
 }) {
   const localizedContent = resolveContentForLanguage(params.content, params.language);
@@ -378,18 +432,73 @@ function applyChanges(params: {
 
   const next = updateLocalizedContentDraft(params.content, params.language, (current) => {
     const working = deepClone(current);
+    const serviceIds = new Set(working.services.map((item) => item.id));
+    const galleryIds = new Set(working.gallery.map((item) => item.id));
 
-    for (const change of params.changes) {
+    params.changes.forEach((change, changeIndex) => {
+      if (change.path === "create.services") {
+        const parsed = createServiceValueSchema.safeParse(parseCreateValue(change.value));
+        if (!parsed.success) {
+          return;
+        }
+
+        const asset = mediaAssetByUrl.get(parsed.data.image);
+        if (!asset || asset.mediaType !== "image") {
+          return;
+        }
+
+        const item = {
+          id: createContentId("service", serviceIds, changeIndex),
+          name: parsed.data.name,
+          category: parsed.data.category,
+          summary: parsed.data.summary,
+          details: parsed.data.details,
+          image: parsed.data.image,
+        };
+        working.services.push(item);
+        appliedPaths.push(`services.${item.id}.__create`);
+        return;
+      }
+
+      if (change.path === "create.gallery") {
+        const parsed = createGalleryValueSchema.safeParse(parseCreateValue(change.value));
+        if (!parsed.success) {
+          return;
+        }
+
+        const asset = mediaAssetByUrl.get(parsed.data.imageUrl);
+        if (!asset) {
+          return;
+        }
+
+        const item = {
+          id: createContentId("gallery", galleryIds, changeIndex),
+          title: parsed.data.title,
+          summary: parsed.data.summary,
+          imageUrl: parsed.data.imageUrl,
+          mediaType: asset.mediaType,
+        };
+        working.gallery.push(item);
+        appliedPaths.push(`gallery.${item.id}.__create`);
+        return;
+      }
+
       const update = allowedByPath.get(change.path);
 
       if (!update) {
-        continue;
+        return;
       }
 
-      const nextValue = update.kind === "text" ? change.value : normalizeMediaValue(change.value, update, mediaUrls);
+      const rawValue = normalizeChangeTextValue(change.value);
+
+      if (rawValue === null) {
+        return;
+      }
+
+      const nextValue = update.kind === "text" ? rawValue : normalizeMediaValue(rawValue, update, mediaUrls);
 
       if (nextValue === null) {
-        continue;
+        return;
       }
 
       setPathValue(working, change.path, nextValue);
@@ -400,7 +509,7 @@ function applyChanges(params: {
         }
       }
       appliedPaths.push(change.path);
-    }
+    });
 
     return working;
   });
@@ -477,19 +586,40 @@ function buildAiPrompt(params: {
     "你是泉寓门诊网站的 AI 改版助手，负责根据管理员需求生成网站内容和素材使用草稿。",
     "你只能返回 JSON，不要返回 Markdown。",
     "必须遵守：",
-    "1. 只允许修改 allowedUpdates 中列出的 path。",
+    "1. 修改已有内容时，只允许使用 allowedUpdates 中列出的 path。",
     "2. 不允许修改 id、slug、href、电话、地址、Telegram、AI 配置、API Key、模型配置。",
     "3. 不允许编造医生资历、价格承诺、治疗效果、法律承诺。",
-    "4. 可以改写文案、SEO、服务介绍、流程表达，也可以根据 mediaAssets 的 aiSummary/tags/suggestedUseCases 选择合适素材 URL 填到 media 类型 path。",
-    "5. media 类型 path 的 value 只能使用 mediaAssets 里已有的 url，不要编造外链。医生头像、服务图、文章封面优先用图片；图册素材可以用图片或视频。",
-    "6. 输出语言必须匹配 language。",
-    "7. 如果素材没有 aiSummary，说明还没有做 AI 素材分析，优先使用已有分析结果的素材。",
+    "4. 你必须认真阅读 mediaAssets 的 aiSummary、visualDescription、tags、suggestedUseCases、placementSuggestions；如果素材明显代表一个当前网站没有的新牙科服务、医院环境、住宿环境、路线/翻译支持或展示内容，不要硬塞进已有服务，应该使用 create.services 或 create.gallery 新增内容。",
+    "5. 可以改写文案、SEO、服务介绍、流程表达，也可以根据素材 AI 标注选择合适素材 URL 填到 media 类型 path。",
+    "6. media 类型 path 和新增内容里的素材 URL 只能使用 mediaAssets 里已有的 url，不要编造外链。服务 image 必须用图片；图册 imageUrl 可以用图片或视频。",
+    "7. 输出语言必须匹配 language。",
+    "8. 如果素材没有 aiSummary，说明还没有做 AI 素材分析，优先使用已有分析结果的素材。",
+    "9. 新增内容必须只围绕牙科治疗、门诊环境、就诊流程、住宿环境、路线/翻译/跨境就诊支持，不要新增无关营销栏目。",
+    "10. 不要重复新增已有服务；只有素材 AI 标注提供了明确的新主题或管理员明确要求新增时才新增。",
     "",
     `language: ${params.language}`,
     `管理员需求: ${params.instruction}`,
     "",
     "返回格式：",
-    '{"notes":["这次改动的简短说明"],"changes":[{"path":"allowed.path","value":"新内容"}]}',
+    '{"notes":["这次改动的简短说明"],"changes":[{"path":"allowed.path","value":"新内容"},{"path":"create.services","value":{"name":"服务名称","category":"分类","summary":"摘要","details":"详情","image":"/uploads/example.jpg"}},{"path":"create.gallery","value":{"title":"展示标题","summary":"展示摘要","imageUrl":"/uploads/example.mp4"}}]}',
+    "",
+    "可新增内容：",
+    JSON.stringify(
+      [
+        {
+          path: "create.services",
+          useWhen: "素材 AI 标注显示这是一个当前 services 列表没有覆盖的新牙科服务或服务场景。",
+          valueSchema: { name: "服务名称", category: "服务分类", summary: "短摘要", details: "详细介绍", image: "mediaAssets 中的图片 url" },
+        },
+        {
+          path: "create.gallery",
+          useWhen: "素材 AI 标注显示这是适合展示的医院环境、治疗场景、住宿环境、路线/翻译支持、设备或视频。",
+          valueSchema: { title: "图册标题", summary: "展示说明", imageUrl: "mediaAssets 中的图片或视频 url" },
+        },
+      ],
+      null,
+      2,
+    ),
     "",
     "allowedUpdates:",
     JSON.stringify(
@@ -522,8 +652,8 @@ function buildVisualAiPrompt(params: {
     params.screenshots.length
       ? `管理员上传了 ${params.screenshots.length} 张网站截图：${params.screenshots.map((item) => `${item.fileName} (${item.mimeType})`).join("；")}。`
       : "管理员没有上传截图，本次只根据文字描述、当前 CMS 内容和素材库生成改动草稿。",
-    "如果有截图，请先根据截图理解管理员指的是页面哪个区域，再结合 allowedUpdates 输出改动草稿。",
-    "如果需求无法映射到 allowedUpdates，请在 notes 里说明原因，不要编造 path。",
+    "如果有截图，请先根据截图理解管理员指的是页面哪个区域，再结合 allowedUpdates 和可新增内容输出改动草稿。",
+    "如果需求无法映射到 allowedUpdates 或 create.services/create.gallery，请在 notes 里说明原因，不要编造 path。",
     "不要输出坐标，不要描述截图本身，最终仍然只返回 JSON。",
   ].join("\n");
 }
@@ -884,7 +1014,7 @@ async function callChatJsonRepair(config: AiConfig, raw: string) {
         role: "user",
         content: [
           "把下面内容修复为合法 JSON，结构必须是：",
-          '{"notes":["说明"],"changes":[{"path":"allowed.path","value":"新内容"}]}',
+          '{"notes":["说明"],"changes":[{"path":"allowed.path","value":"新内容"},{"path":"create.services","value":{"name":"服务名称","category":"分类","summary":"摘要","details":"详情","image":"/uploads/example.jpg"}}]}',
           "如果某项不完整就删除该项。不要新增非原文表达的改动。",
           "",
           raw.slice(0, 12000),
@@ -914,7 +1044,7 @@ async function callResponsesJsonRepair(config: AiConfig, raw: string) {
     instructions: "你是 JSON 修复器。只返回合法 JSON，不要解释。",
     input: [
       "把下面内容修复为合法 JSON，结构必须是：",
-      '{"notes":["说明"],"changes":[{"path":"allowed.path","value":"新内容"}]}',
+      '{"notes":["说明"],"changes":[{"path":"allowed.path","value":"新内容"},{"path":"create.services","value":{"name":"服务名称","category":"分类","summary":"摘要","details":"详情","image":"/uploads/example.jpg"}}]}',
       "如果某项不完整就删除该项。不要新增非原文表达的改动。",
       "",
       raw.slice(0, 12000),

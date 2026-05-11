@@ -319,7 +319,16 @@ function deepMerge(base: unknown, override: unknown): unknown {
       return base;
     }
 
-    return base.map((item, index) => deepMerge(item, override[index]));
+    const length = Math.max(base.length, override.length);
+    return Array.from({ length }, (_, index) => {
+      if (!(index in override)) {
+        return base[index];
+      }
+      if (!(index in base)) {
+        return override[index];
+      }
+      return deepMerge(base[index], override[index]);
+    });
   }
 
   if (base && typeof base === "object") {
