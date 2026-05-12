@@ -17,7 +17,13 @@ import {
   validateAdminCredentials,
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
-import { analyzeMediaAsset, generateVisualWebsiteDraft, generateWebsiteDraft, translateWebsiteFromChinese } from "../../lib/admin-ai-gateway";
+import {
+  analyzeMediaAsset,
+  generateVisualWebsiteDraft,
+  generateWebsiteDraft,
+  generateWebsiteDraftForMediaAsset,
+  translateWebsiteFromChinese,
+} from "../../lib/admin-ai-gateway";
 import { testAiProviderConnection } from "../../lib/ai-gateway";
 import { mediaLibraryRepository } from "../../lib/storage/media-library-repository";
 import {
@@ -70,6 +76,13 @@ const copyFolderSchema = z.object({
 const aiWebsiteDraftSchema = z.object({
   instruction: z.string().trim().min(1).max(2000),
   language: z.enum(["zh", "ru", "en"]).default("zh"),
+});
+
+const aiWebsiteDraftForAssetSchema = z.object({
+  content: cmsContentSchema,
+  instruction: z.string().trim().min(1).max(2000),
+  language: z.enum(["zh", "ru", "en"]).default("zh"),
+  assetId: z.string().trim().min(1),
 });
 
 const aiTranslateFromZhSchema = z.object({
@@ -583,6 +596,61 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       return reply.status(502).send({
         ok: false,
         error: "ai_site_draft_failed",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/admin/ai/site-draft-media-asset", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const parsed = aiWebsiteDraftForAssetSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.flatten(),
+      });
+    }
+
+    try {
+      const library = await mediaLibraryRepository.getState();
+      const asset = library.assets.find((item) => item.id === parsed.data.assetId);
+
+      if (!asset) {
+        return reply.status(404).send({
+          ok: false,
+          error: "media_asset_not_found",
+        });
+      }
+
+      const result = await generateWebsiteDraftForMediaAsset({
+        config: parsed.data.content.aiConfig,
+        content: parsed.data.content,
+        asset,
+        instruction: parsed.data.instruction,
+        language: parsed.data.language,
+      });
+
+      return {
+        ok: true,
+        content: result.content,
+        notes: result.notes,
+        asset: {
+          id: asset.id,
+          title: asset.title,
+          url: asset.url,
+          mediaType: asset.mediaType,
+        },
+      };
+    } catch (error) {
+      return reply.status(502).send({
+        ok: false,
+        error: "ai_site_draft_media_asset_failed",
         message: error instanceof Error ? error.message : String(error),
       });
     }

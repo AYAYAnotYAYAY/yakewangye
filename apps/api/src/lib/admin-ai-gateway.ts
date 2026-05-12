@@ -1313,6 +1313,42 @@ export async function generateWebsiteDraft(params: {
   };
 }
 
+export async function generateWebsiteDraftForMediaAsset(params: {
+  config: AiConfig;
+  content: CmsContent;
+  asset: MediaLibraryAsset;
+  instruction: string;
+  language: Language;
+}): Promise<WebsiteDraftResult> {
+  const assetUseHint = [
+    "本次是逐个素材改站流程，只处理下面这个素材，不要考虑素材库其他素材。",
+    `素材标题：${params.asset.title}`,
+    `素材 URL：${params.asset.url}`,
+    `素材类型：${params.asset.mediaType}`,
+    `AI 摘要：${params.asset.aiAnalysis?.summary ?? "未分析"}`,
+    `视觉描述：${params.asset.aiAnalysis?.visualDescription ?? "未分析"}`,
+    `适用场景：${(params.asset.aiAnalysis?.suggestedUseCases ?? []).join("；") || "未分析"}`,
+    `建议位置：${(params.asset.aiAnalysis?.placementSuggestions ?? []).join("；") || "未分析"}`,
+    "请判断这个素材是否值得用于网站。如果适合，优先新增服务或新增图册；如果只适合替换已有图片，也可以替换。若不适合使用，notes 说明原因并返回空 changes。",
+  ].join("\n");
+
+  const result = await generateWebsiteDraft({
+    config: params.config,
+    content: params.content,
+    mediaLibrary: {
+      folders: [],
+      assets: [params.asset],
+    },
+    instruction: [params.instruction, assetUseHint].join("\n\n"),
+    language: params.language,
+  });
+
+  return {
+    content: result.content,
+    notes: [`素材 ${params.asset.title || params.asset.fileName}：`, ...result.notes],
+  };
+}
+
 export async function generateVisualWebsiteDraft(params: {
   config: AiConfig;
   content: CmsContent;

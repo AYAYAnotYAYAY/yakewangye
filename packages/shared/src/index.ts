@@ -250,6 +250,17 @@ export const landingPageSchema = z.object({
 
 export const aiProviderSchema = z.enum(["mock", "openai_compatible", "openai_responses"]);
 
+export const aiConfigPresetSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  provider: aiProviderSchema,
+  endpoint: z.string(),
+  apiKey: z.string(),
+  model: z.string(),
+  temperature: z.number().min(0).max(2),
+  maxTokens: z.number().int().min(128).max(16000),
+});
+
 export const aiConfigSchema = z.object({
   provider: aiProviderSchema,
   endpoint: z.string(),
@@ -260,7 +271,9 @@ export const aiConfigSchema = z.object({
   leadPrompt: z.string(),
   fallbackReply: z.string(),
   temperature: z.number().min(0).max(2),
-  maxTokens: z.number().int().min(128).max(4096),
+  maxTokens: z.number().int().min(128).max(16000),
+  activePresetId: z.string().optional(),
+  presets: z.array(aiConfigPresetSchema).default([]),
 });
 
 export const telegramConfigSchema = z.object({
@@ -639,6 +652,7 @@ const aiConfigSeed: AiConfig = {
     "我先帮你做牙科初步分诊。请告诉我牙齿/口腔的主要问题、持续多久了、是否疼痛或出血、是否已经拍过片；如果是来院安排，也可以说明价格、预约、路线、翻译或住宿需求。",
   temperature: 0.3,
   maxTokens: 800,
+  presets: [],
 };
 
 const telegramConfigSeed: TelegramConfig = {

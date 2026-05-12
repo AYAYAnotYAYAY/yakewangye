@@ -545,6 +545,36 @@ export async function generateAiSiteDraft(payload: { instruction: string; langua
   };
 }
 
+export async function generateAiSiteDraftForMediaAsset(
+  payload: { content: CmsContent; instruction: string; language: Language; assetId: string },
+  token: string,
+) {
+  const response = await fetchWithFallback("/api/admin/ai/site-draft-media-asset", {
+    method: "POST",
+    headers: {
+      ...createAdminHeaders(token),
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseErrorMessage(response, "generate_ai_site_draft_media_asset_failed"));
+  }
+
+  return (await response.json()) as {
+    ok: true;
+    content: CmsContent;
+    notes: string[];
+    asset: {
+      id: string;
+      title: string;
+      url: string;
+      mediaType: "image" | "video";
+    };
+  };
+}
+
 export async function generateAiVisualSiteDraft(
   payload: {
     instruction: string;

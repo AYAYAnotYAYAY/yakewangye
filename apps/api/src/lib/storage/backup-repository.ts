@@ -192,7 +192,7 @@ async function writeBackupJsonFile(targetPath: string, value: unknown) {
   await writeFile(targetPath, JSON.stringify(value, null, 2), "utf8");
 }
 
-function summarizeBusiness(content: z.infer<typeof cmsContentSchema>) {
+function summarizeBusiness(content: CmsContent) {
   const contact = content.siteSettings.primaryContact;
 
   return [
@@ -202,7 +202,7 @@ function summarizeBusiness(content: z.infer<typeof cmsContentSchema>) {
   ].join("");
 }
 
-function buildAiPromptTemplate(content: z.infer<typeof cmsContentSchema>) {
+function buildAiPromptTemplate(content: CmsContent) {
   return [
     "你正在为一个真实线上牙科门诊网站改内容和排版素材，不只是改写文案。",
     `品牌名：${content.siteSettings.brandName}`,
@@ -247,7 +247,7 @@ function buildAiCopyMediaAssets(mediaLibrary: MediaLibraryState) {
     }));
 }
 
-function createAiCopyPackage(params: { content: z.infer<typeof cmsContentSchema>; mediaLibrary: MediaLibraryState; dataRoot: string }) {
+function createAiCopyPackage(params: { content: CmsContent; mediaLibrary: MediaLibraryState; dataRoot: string }) {
   const { content, mediaLibrary, dataRoot } = params;
   const contact = content.siteSettings.primaryContact;
   const mediaAssetsForAi = buildAiCopyMediaAssets(mediaLibrary);
@@ -607,8 +607,9 @@ export async function createAiCopyPackageBundle() {
     readJsonFile(paths.contentFilePath, cmsContentSchema, cmsContentSeed),
     readJsonFile(paths.mediaLibraryFilePath, mediaLibraryStateSchema, mediaLibraryStateSchema.parse({ folders: [], assets: [] })),
   ]);
+  const contentWithI18n = cmsContentSchema.parse(content.i18n ? content : { ...content, i18n: cmsContentSeed.i18n });
   return createAiCopyPackage({
-    content: content.i18n ? content : { ...content, i18n: cmsContentSeed.i18n },
+    content: contentWithI18n,
     mediaLibrary,
     dataRoot: paths.dataRoot,
   });
@@ -667,8 +668,9 @@ export async function restoreAiCopyPackage(rawInput: string | Buffer) {
   const rawText = Buffer.isBuffer(rawInput) ? rawInput.toString("utf8") : rawInput;
   const bundle = aiCopyPackageSchema.parse(JSON.parse(rawText));
   const paths = getLocalStoragePaths();
-  const currentContent = await readJsonFile(paths.contentFilePath, cmsContentSchema, cmsContentSeed);
-  const sanitizedContent = sanitizeAiCopyContent(currentContent, bundle.contentSnapshot, bundle.mediaAssetsForAi);
+  const currentContent = cmsContentSchema.parse(await readJsonFile(paths.contentFilePath, cmsContentSchema, cmsContentSeed));
+  const incomingContent = cmsContentSchema.parse(bundle.contentSnapshot);
+  const sanitizedContent = sanitizeAiCopyContent(currentContent, incomingContent, bundle.mediaAssetsForAi);
 
   await mkdir(paths.dataRoot, { recursive: true });
   await writeBackupJsonFile(

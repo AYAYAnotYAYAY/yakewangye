@@ -1,5 +1,6 @@
 import type {
   Article,
+  AiConfig,
   ChatSession,
   CmsContent,
   Doctor,
@@ -22,6 +23,7 @@ import {
   fetchChatSessions,
   fetchMediaLibrary,
   fetchVisitorLogs,
+  generateAiSiteDraftForMediaAsset,
   generateAiVisualSiteDraft,
   generateAiSiteDraft,
   loginAdmin,
@@ -66,6 +68,17 @@ type AiDiffEntry = {
   label: string;
   currentValue: string;
   nextValue: string;
+};
+
+type AiPreset = NonNullable<AiConfig["presets"]>[number];
+
+type BatchMediaDraftProgress = {
+  running: boolean;
+  current: number;
+  total: number;
+  currentTitle: string;
+  notes: string[];
+  errors: string[];
 };
 
 type TabKey =
@@ -115,6 +128,32 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function createAiPresetFromConfig(config: AiConfig, name: string): AiPreset {
+  return {
+    id: createId("ai-preset"),
+    name,
+    provider: config.provider,
+    endpoint: config.endpoint,
+    apiKey: config.apiKey,
+    model: config.model,
+    temperature: config.temperature,
+    maxTokens: config.maxTokens,
+  };
+}
+
+function applyAiPresetToConfig(config: AiConfig, preset: AiPreset): AiConfig {
+  return {
+    ...config,
+    provider: preset.provider,
+    endpoint: preset.endpoint,
+    apiKey: preset.apiKey,
+    model: preset.model,
+    temperature: preset.temperature,
+    maxTokens: preset.maxTokens,
+    activePresetId: preset.id,
+  };
+}
+
 function formatDateTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
@@ -151,7 +190,7 @@ function formatAdminError(error: unknown) {
     return "本次请求内容太大。请减少截图数量/图片大小，或先用素材库的“AI 分析未处理素材”，再用纯文字让 AI 根据素材描述改站。";
   }
 
-  if (/ai_site_draft_failed|visual_ai_draft_failed|generate_ai_site_draft_failed/i.test(raw)) {
+  if (/ai_site_draft_failed|ai_site_draft_media_asset_failed|visual_ai_draft_failed|generate_ai_site_draft_failed|generate_ai_site_draft_media_asset_failed/i.test(raw)) {
     return "AI 生成失败。请先在“AI 配置”测试连接，确认模型可用；如果你用的是文本模型，请不要上传截图。";
   }
 
@@ -924,6 +963,15 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [copyingInstructions, setCopyingInstructions] = useState(false);
   const [generatingAiSiteDraft, setGeneratingAiSiteDraft] = useState(false);
   const [generatingAiVisualDraft, setGeneratingAiVisualDraft] = useState(false);
+  const [generatingBatchMediaDraft, setGeneratingBatchMediaDraft] = useState(false);
+  const [batchMediaDraftProgress, setBatchMediaDraftProgress] = useState<BatchMediaDraftProgress>({
+    running: false,
+    current: 0,
+    total: 0,
+    currentTitle: "",
+    notes: [],
+    errors: [],
+  });
   const [translatingFromZh, setTranslatingFromZh] = useState(false);
   const [testingAiConfig, setTestingAiConfig] = useState(false);
   const [showAiApiKey, setShowAiApiKey] = useState(false);
@@ -1258,6 +1306,99 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     }
   };
 
+  const handleGenerateBatchMediaDraft = async () => {
+    const instruction = aiSiteInstruction.trim();
+    const assets = [...mediaLibrary.assets].sort((left, right) => {
+      const score = (asset: MediaLibraryState["assets"][number]) =>
+        asset.aiAnalysis?.status === "ready" ? 3 : asset.aiAnalysis?.status === "metadata_only" ? 2 : asset.aiAnalysis ? 1 : 0;
+      return score(right) - score(left) || right.updatedAt.localeCompare(left.updatedAt);
+    });
+
+    if (!instruction) {
+      window.alert("请先输入你希望 AI 怎么根据素材改网站。");
+      return;
+    }
+
+    if (!assets.length) {
+      window.alert("素材库里还没有素材。请先上传图片或视频。");
+      return;
+    }
+
+    const confirmed = window.confirm(`将按顺序逐个分析 ${assets.length} 个素材，每个素材单独调用一次 AI，并把结果累计成一个草稿。这个过程可能较慢，是否继续？`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setGeneratingBatchMediaDraft(true);
+    setBatchMediaDraftProgress({
+      running: true,
+      current: 0,
+      total: assets.length,
+      currentTitle: "",
+      notes: [],
+      errors: [],
+    });
+
+    let accumulatedContent = draft;
+    const notes: string[] = [];
+    const errors: string[] = [];
+
+    for (let index = 0; index < assets.length; index += 1) {
+      const asset = assets[index];
+      setBatchMediaDraftProgress({
+        running: true,
+        current: index + 1,
+        total: assets.length,
+        currentTitle: asset.title || asset.fileName,
+        notes,
+        errors,
+      });
+
+      try {
+        const result = await generateAiSiteDraftForMediaAsset(
+          {
+            content: accumulatedContent,
+            instruction,
+            language: editingLanguage,
+            assetId: asset.id,
+          },
+          adminToken,
+        );
+        accumulatedContent = result.content;
+        notes.push(...result.notes.slice(0, 4));
+      } catch (error) {
+        errors.push(`${asset.title || asset.fileName}: ${formatAdminError(error)}`);
+      }
+    }
+
+    const localizedIncoming = resolveContentForLanguage(accumulatedContent, editingLanguage);
+    const diffs = collectAiCopyDiffs(localizedDraft, localizedIncoming);
+    setPendingAiImport({
+      language: editingLanguage,
+      incoming: accumulatedContent,
+      localizedIncoming,
+      diffs,
+    });
+    setSelectedAiDiffIds(diffs.map((item) => item.id));
+    setBatchMediaDraftProgress({
+      running: false,
+      current: assets.length,
+      total: assets.length,
+      currentTitle: "",
+      notes,
+      errors,
+    });
+    setGeneratingBatchMediaDraft(false);
+
+    window.alert(
+      [
+        `逐个素材 AI 改站已完成，发现 ${diffs.length} 项可应用改动。`,
+        errors.length ? `失败素材 ${errors.length} 个，已跳过。` : "所有素材请求已处理。",
+      ].join("\n"),
+    );
+  };
+
   const handleGenerateAiVisualDraft = async () => {
     const instruction = aiVisualInstruction.trim();
 
@@ -1311,6 +1452,61 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     } finally {
       setTestingAiConfig(false);
     }
+  };
+
+  const handleSaveCurrentAiPreset = () => {
+    const name = window.prompt("给当前 AI 配置预设起个名字", draft.aiConfig.model || "新预设")?.trim();
+
+    if (!name) {
+      return;
+    }
+
+    const preset = createAiPresetFromConfig(draft.aiConfig, name);
+    setDraft((current) => ({
+      ...current,
+      aiConfig: {
+        ...current.aiConfig,
+        activePresetId: preset.id,
+        presets: [...(current.aiConfig.presets ?? []), preset],
+      },
+    }));
+  };
+
+  const handleApplyAiPreset = (presetId: string) => {
+    const preset = draft.aiConfig.presets?.find((item) => item.id === presetId);
+
+    if (!preset) {
+      return;
+    }
+
+    setDraft((current) => ({
+      ...current,
+      aiConfig: applyAiPresetToConfig(current.aiConfig, preset),
+    }));
+  };
+
+  const handleDeleteAiPreset = () => {
+    const presetId = draft.aiConfig.activePresetId;
+
+    if (!presetId) {
+      window.alert("请先选择一个预设。");
+      return;
+    }
+
+    const preset = draft.aiConfig.presets?.find((item) => item.id === presetId);
+
+    if (!preset || !window.confirm(`删除 AI 配置预设“${preset.name}”？`)) {
+      return;
+    }
+
+    setDraft((current) => ({
+      ...current,
+      aiConfig: {
+        ...current.aiConfig,
+        activePresetId: undefined,
+        presets: (current.aiConfig.presets ?? []).filter((item) => item.id !== presetId),
+      },
+    }));
   };
 
   const handleTranslateZhToRuEn = async () => {
@@ -1601,6 +1797,14 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                   <button className="button primary" onClick={handleGenerateAiSiteDraft} type="button" disabled={generatingAiSiteDraft}>
                     {generatingAiSiteDraft ? "生成中..." : "让 AI 直接生成草稿"}
                   </button>
+                  <button
+                    className="button primary"
+                    onClick={handleGenerateBatchMediaDraft}
+                    type="button"
+                    disabled={generatingBatchMediaDraft || generatingAiSiteDraft}
+                  >
+                    {generatingBatchMediaDraft ? "逐个处理中..." : "逐个素材 AI 改站"}
+                  </button>
                 </div>
               </div>
               <div className="entity-note">
@@ -1610,6 +1814,27 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 <span>直接发给网站 AI 的改版需求</span>
                 <textarea value={aiSiteInstruction} onChange={(event) => setAiSiteInstruction(event.target.value)} />
               </label>
+              {batchMediaDraftProgress.total ? (
+                <div className="admin-ai-progress">
+                  <div className="admin-ai-progress-head">
+                    <strong>
+                      {batchMediaDraftProgress.running ? "正在逐个处理素材" : "逐个素材处理完成"}
+                    </strong>
+                    <span>
+                      {batchMediaDraftProgress.current} / {batchMediaDraftProgress.total}
+                    </span>
+                  </div>
+                  <progress value={batchMediaDraftProgress.current} max={batchMediaDraftProgress.total} />
+                  {batchMediaDraftProgress.currentTitle ? <div className="entity-note">当前素材：{batchMediaDraftProgress.currentTitle}</div> : null}
+                  {batchMediaDraftProgress.errors.length ? (
+                    <div className="admin-ai-progress-errors">
+                      {batchMediaDraftProgress.errors.slice(-5).map((item) => (
+                        <div key={item}>{item}</div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="admin-subsection">
                 <div className="admin-toolbar">
                   <h3>截图 + 描述改网站</h3>
@@ -1786,6 +2011,25 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 <h2>AI 配置与提示词</h2>
                 <button className="button secondary" onClick={handleTestAiConfig} type="button" disabled={testingAiConfig}>
                   {testingAiConfig ? "测试中..." : "测试 AI 连接"}
+                </button>
+              </div>
+              <div className="admin-ai-preset-bar">
+                <label className="admin-field">
+                  <span>配置预设</span>
+                  <select value={draft.aiConfig.activePresetId ?? ""} onChange={(event) => handleApplyAiPreset(event.target.value)}>
+                    <option value="">未选择预设</option>
+                    {(draft.aiConfig.presets ?? []).map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.name} · {preset.model}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button className="button secondary" onClick={handleSaveCurrentAiPreset} type="button">
+                  保存当前为预设
+                </button>
+                <button className="button secondary" onClick={handleDeleteAiPreset} type="button" disabled={!draft.aiConfig.activePresetId}>
+                  删除当前预设
                 </button>
               </div>
               <div className="admin-grid">
