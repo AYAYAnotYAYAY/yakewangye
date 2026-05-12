@@ -2011,7 +2011,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                 <h3>首页模块显示</h3>
                 <div className="admin-toggle-grid">
                   <ToggleField
-                    label="首页相册精选"
+                    label="首页相册精选（已弃用）"
                     checked={draft.siteSettings.sectionVisibility.galleryShowcase}
                     onChange={(checked) => updateSectionVisibility("galleryShowcase", checked)}
                   />

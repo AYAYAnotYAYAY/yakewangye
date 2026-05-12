@@ -20,8 +20,8 @@ export const siteSettingsSchema = z.object({
   footerDescription: z.string(),
   sectionVisibility: z
     .object({
-      galleryShowcase: z.boolean().default(true),
-      galleryList: z.boolean().default(false),
+      galleryShowcase: z.boolean().default(false),
+      galleryList: z.boolean().default(true),
       consultationPrep: z.boolean().default(true),
       homeServices: z.boolean().default(true),
       homeJourney: z.boolean().default(true),
@@ -31,8 +31,8 @@ export const siteSettingsSchema = z.object({
       articles: z.boolean().default(true),
     })
     .default({
-      galleryShowcase: true,
-      galleryList: false,
+      galleryShowcase: false,
+      galleryList: true,
       consultationPrep: true,
       homeServices: true,
       homeJourney: true,
@@ -469,8 +469,8 @@ const siteSettingsSeed: SiteSettings = {
   footerDescription:
     "这是第一版可运行骨架，目标是为后续 CMS、AI 问诊、文章发布、访客分析与 CRM 打下稳定基础。",
   sectionVisibility: {
-    galleryShowcase: true,
-    galleryList: false,
+    galleryShowcase: false,
+    galleryList: true,
     consultationPrep: true,
     homeServices: true,
     homeJourney: true,

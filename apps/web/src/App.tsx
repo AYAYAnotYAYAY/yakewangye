@@ -193,54 +193,6 @@ function MediaPreview(props: { src: string; alt: string; mediaType?: "image" | "
   return <img className="entity-image" src={resolveAssetUrl(props.src)} alt={props.alt} />;
 }
 
-function FeaturedGalleryShowcase(props: { items: GalleryAsset[]; dictionary: UiDictionary }) {
-  const items = props.items.filter((item) => item.imageUrl).slice(0, 8);
-
-  if (!items.length) {
-    return null;
-  }
-
-  const primary = items[0];
-
-  return (
-    <section id="gallery-showcase" className="gallery-showcase-section">
-      <div className="container">
-        <div className="gallery-showcase">
-          <div className="gallery-showcase-head">
-            <span className="eyebrow">{props.dictionary.galleryEyebrow}</span>
-            <h2>{props.dictionary.galleryTitle}</h2>
-            <p>{props.dictionary.galleryDescription}</p>
-          </div>
-          <div className="gallery-showcase-grid">
-            <div className="gallery-showcase-main">
-              {primary.mediaType === "video" ? (
-                <video src={resolveAssetUrl(primary.imageUrl)} muted autoPlay loop playsInline preload="metadata" />
-              ) : (
-                <img src={resolveAssetUrl(primary.imageUrl)} alt={primary.title} />
-              )}
-            </div>
-            <div className="gallery-showcase-side">
-              {items.slice(1, 5).map((item) => (
-                <div key={item.id} className="gallery-showcase-tile">
-                  {item.mediaType === "video" ? (
-                    <video src={resolveAssetUrl(item.imageUrl)} muted autoPlay loop playsInline preload="metadata" />
-                  ) : (
-                    <img src={resolveAssetUrl(item.imageUrl)} alt={item.title} loading="lazy" />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="gallery-showcase-caption">
-            <strong>{primary.title}</strong>
-            <span>{primary.summary}</span>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function ArticleList(props: { items: Article[]; anchorId?: string; dictionary: UiDictionary }) {
   return props.items.length ? (
     <section id={props.anchorId}>
@@ -774,7 +726,6 @@ export function App() {
             onSectionChange={(nextSection) => updateVisualSection(index, nextSection)}
           />
         ))}
-        {visibility.galleryShowcase ? <FeaturedGalleryShowcase items={resolvedContent.gallery} dictionary={dictionary} /> : null}
         {gallerySections.map(({ section, index }) => (
           <SectionRenderer
             key={section.id}
@@ -836,7 +787,6 @@ export function App() {
       {heroSections.map(({ section }) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
-      {visibility.galleryShowcase ? <FeaturedGalleryShowcase items={resolvedContent.gallery} dictionary={dictionary} /> : null}
       {gallerySections.map(({ section }) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
