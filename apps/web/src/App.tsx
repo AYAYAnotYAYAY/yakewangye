@@ -116,6 +116,7 @@ function PageShell(props: {
         dictionary={props.dictionary}
         onLanguageChange={props.onLanguageChange}
       />
+      <MediaBackdropWall items={props.content.gallery} />
       {props.children}
       <Footer settings={props.content.siteSettings} dictionary={props.dictionary} />
       <ChatWidget
@@ -124,6 +125,30 @@ function PageShell(props: {
         dictionary={props.dictionary}
       />
     </main>
+  );
+}
+
+function MediaBackdropWall(props: { items: GalleryAsset[] }) {
+  const items = props.items.filter((item) => item.imageUrl).slice(0, 10);
+
+  if (!items.length) {
+    return null;
+  }
+
+  return (
+    <div className="site-media-backdrop" aria-hidden="true">
+      <div className="site-media-backdrop-track">
+        {[...items, ...items].map((item, index) => (
+          <div key={`${item.id}-${index}`} className="site-media-backdrop-tile">
+            {item.mediaType === "video" ? (
+              <video src={resolveAssetUrl(item.imageUrl)} muted autoPlay loop playsInline preload="metadata" />
+            ) : (
+              <img src={resolveAssetUrl(item.imageUrl)} alt="" loading="lazy" />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -166,6 +191,50 @@ function MediaPreview(props: { src: string; alt: string; mediaType?: "image" | "
   }
 
   return <img className="entity-image" src={resolveAssetUrl(props.src)} alt={props.alt} />;
+}
+
+function FeaturedGalleryShowcase(props: { items: GalleryAsset[]; dictionary: UiDictionary }) {
+  const items = props.items.filter((item) => item.imageUrl).slice(0, 8);
+
+  if (!items.length) {
+    return null;
+  }
+
+  const primary = items[0];
+
+  return (
+    <section id="gallery-showcase" className="gallery-showcase-section">
+      <div className="container">
+        <div className="gallery-showcase">
+          <div className="gallery-showcase-copy">
+            <span className="eyebrow">{props.dictionary.galleryEyebrow}</span>
+            <h2>{props.dictionary.galleryTitle}</h2>
+            <p>{props.dictionary.galleryDescription}</p>
+          </div>
+          <div className="gallery-showcase-stage">
+            <div className="gallery-showcase-primary">
+              <MediaPreview src={primary.imageUrl} alt={primary.title} mediaType={primary.mediaType} />
+              <div>
+                <strong>{primary.title}</strong>
+                <span>{primary.summary}</span>
+              </div>
+            </div>
+            <div className="gallery-showcase-strip">
+              {[...items, ...items].map((item, index) => (
+                <div key={`${item.id}-${index}`} className="gallery-showcase-thumb">
+                  {item.mediaType === "video" ? (
+                    <video src={resolveAssetUrl(item.imageUrl)} muted autoPlay loop playsInline preload="metadata" />
+                  ) : (
+                    <img src={resolveAssetUrl(item.imageUrl)} alt="" loading="lazy" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function ArticleList(props: { items: Article[]; anchorId?: string; dictionary: UiDictionary }) {
@@ -468,6 +537,13 @@ export function App() {
     () => resolveContentForLanguage(contentWithFallbackI18n, language),
     [contentWithFallbackI18n, language],
   );
+  const homeSectionsWithIndex = resolvedContent.homePage.sections.map((section, index) => ({ section, index }));
+  const heroSections = homeSectionsWithIndex.filter((entry) => entry.section.type === "hero");
+  const gallerySections = homeSectionsWithIndex.filter((entry) => entry.section.type === "gallery");
+  const deferredHomeSections = homeSectionsWithIndex.filter((entry) => entry.section.type === "services" || entry.section.type === "journey");
+  const supportingHomeSections = homeSectionsWithIndex.filter(
+    (entry) => entry.section.type !== "hero" && entry.section.type !== "gallery" && entry.section.type !== "services" && entry.section.type !== "journey",
+  );
 
   const applyLanguage = (nextLanguage: Language, persist = true) => {
     setLanguage(nextLanguage);
@@ -679,20 +755,45 @@ export function App() {
           </div>
         </section>
         {warning ? <RuntimeNotice message={warning} dictionary={dictionary} /> : null}
-        {resolvedContent.homePage.sections.map((section, sectionIndex) => (
+        {heroSections.map(({ section, index }) => (
           <SectionRenderer
             key={section.id}
             section={section}
             editable
-            onSectionChange={(nextSection) => updateVisualSection(sectionIndex, nextSection)}
+            onSectionChange={(nextSection) => updateVisualSection(index, nextSection)}
           />
         ))}
-        <TriageFlowSection content={resolvedContent} dictionary={dictionary} />
-        <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} />
+        <FeaturedGalleryShowcase items={resolvedContent.gallery} dictionary={dictionary} />
+        {gallerySections.map(({ section, index }) => (
+          <SectionRenderer
+            key={section.id}
+            section={section}
+            editable
+            onSectionChange={(nextSection) => updateVisualSection(index, nextSection)}
+          />
+        ))}
+        <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} />
+        {supportingHomeSections.map(({ section, index }) => (
+          <SectionRenderer
+            key={section.id}
+            section={section}
+            editable
+            onSectionChange={(nextSection) => updateVisualSection(index, nextSection)}
+          />
+        ))}
         <DoctorList items={resolvedContent.doctors} anchorId="doctors" dictionary={dictionary} />
         <PricingList items={resolvedContent.pricing} anchorId="pricing" dictionary={dictionary} />
-        <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} />
         <ArticleList items={resolvedContent.articles} anchorId="articles" dictionary={dictionary} />
+        <TriageFlowSection content={resolvedContent} dictionary={dictionary} />
+        {deferredHomeSections.map(({ section, index }) => (
+          <SectionRenderer
+            key={section.id}
+            section={section}
+            editable
+            onSectionChange={(nextSection) => updateVisualSection(index, nextSection)}
+          />
+        ))}
+        <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} />
         <ContactBand content={resolvedContent} dictionary={dictionary} />
       </PageShell>
     );
@@ -721,15 +822,25 @@ export function App() {
   return (
     <PageShell content={resolvedContent} language={language} dictionary={dictionary} onLanguageChange={applyLanguage}>
       {warning ? <RuntimeNotice message={warning} dictionary={dictionary} /> : null}
-      {resolvedContent.homePage.sections.map((section) => (
+      {heroSections.map(({ section }) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
-      <TriageFlowSection content={resolvedContent} dictionary={dictionary} />
-      <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} />
+      <FeaturedGalleryShowcase items={resolvedContent.gallery} dictionary={dictionary} />
+      {gallerySections.map(({ section }) => (
+        <SectionRenderer key={section.id} section={section} />
+      ))}
+      <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} />
+      {supportingHomeSections.map(({ section }) => (
+        <SectionRenderer key={section.id} section={section} />
+      ))}
       <DoctorList items={resolvedContent.doctors} anchorId="doctors" dictionary={dictionary} />
       <PricingList items={resolvedContent.pricing} anchorId="pricing" dictionary={dictionary} />
-      <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} />
       <ArticleList items={resolvedContent.articles} anchorId="articles" dictionary={dictionary} />
+      <TriageFlowSection content={resolvedContent} dictionary={dictionary} />
+      {deferredHomeSections.map(({ section }) => (
+        <SectionRenderer key={section.id} section={section} />
+      ))}
+      <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} />
       <ContactBand content={resolvedContent} dictionary={dictionary} />
     </PageShell>
   );
