@@ -206,30 +206,34 @@ function FeaturedGalleryShowcase(props: { items: GalleryAsset[]; dictionary: UiD
     <section id="gallery-showcase" className="gallery-showcase-section">
       <div className="container">
         <div className="gallery-showcase">
-          <div className="gallery-showcase-copy">
+          <div className="gallery-showcase-head">
             <span className="eyebrow">{props.dictionary.galleryEyebrow}</span>
             <h2>{props.dictionary.galleryTitle}</h2>
             <p>{props.dictionary.galleryDescription}</p>
           </div>
-          <div className="gallery-showcase-stage">
-            <div className="gallery-showcase-primary">
-              <MediaPreview src={primary.imageUrl} alt={primary.title} mediaType={primary.mediaType} />
-              <div>
-                <strong>{primary.title}</strong>
-                <span>{primary.summary}</span>
-              </div>
+          <div className="gallery-showcase-grid">
+            <div className="gallery-showcase-main">
+              {primary.mediaType === "video" ? (
+                <video src={resolveAssetUrl(primary.imageUrl)} muted autoPlay loop playsInline preload="metadata" />
+              ) : (
+                <img src={resolveAssetUrl(primary.imageUrl)} alt={primary.title} />
+              )}
             </div>
-            <div className="gallery-showcase-strip">
-              {[...items, ...items].map((item, index) => (
-                <div key={`${item.id}-${index}`} className="gallery-showcase-thumb">
+            <div className="gallery-showcase-side">
+              {items.slice(1, 5).map((item) => (
+                <div key={item.id} className="gallery-showcase-tile">
                   {item.mediaType === "video" ? (
                     <video src={resolveAssetUrl(item.imageUrl)} muted autoPlay loop playsInline preload="metadata" />
                   ) : (
-                    <img src={resolveAssetUrl(item.imageUrl)} alt="" loading="lazy" />
+                    <img src={resolveAssetUrl(item.imageUrl)} alt={item.title} loading="lazy" />
                   )}
                 </div>
               ))}
             </div>
+          </div>
+          <div className="gallery-showcase-caption">
+            <strong>{primary.title}</strong>
+            <span>{primary.summary}</span>
           </div>
         </div>
       </div>
@@ -544,6 +548,13 @@ export function App() {
   const supportingHomeSections = homeSectionsWithIndex.filter(
     (entry) => entry.section.type !== "hero" && entry.section.type !== "gallery" && entry.section.type !== "services" && entry.section.type !== "journey",
   );
+  const visibility = {
+    ...cmsContentSeed.siteSettings.sectionVisibility,
+    ...(resolvedContent.siteSettings.sectionVisibility ?? {}),
+  };
+  const visibleDeferredHomeSections = deferredHomeSections.filter(
+    (entry) => (entry.section.type === "services" && visibility.homeServices) || (entry.section.type === "journey" && visibility.homeJourney),
+  );
 
   const applyLanguage = (nextLanguage: Language, persist = true) => {
     setLanguage(nextLanguage);
@@ -763,7 +774,7 @@ export function App() {
             onSectionChange={(nextSection) => updateVisualSection(index, nextSection)}
           />
         ))}
-        <FeaturedGalleryShowcase items={resolvedContent.gallery} dictionary={dictionary} />
+        {visibility.galleryShowcase ? <FeaturedGalleryShowcase items={resolvedContent.gallery} dictionary={dictionary} /> : null}
         {gallerySections.map(({ section, index }) => (
           <SectionRenderer
             key={section.id}
@@ -772,7 +783,7 @@ export function App() {
             onSectionChange={(nextSection) => updateVisualSection(index, nextSection)}
           />
         ))}
-        <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} />
+        {visibility.galleryList ? <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} /> : null}
         {supportingHomeSections.map(({ section, index }) => (
           <SectionRenderer
             key={section.id}
@@ -781,11 +792,11 @@ export function App() {
             onSectionChange={(nextSection) => updateVisualSection(index, nextSection)}
           />
         ))}
-        <DoctorList items={resolvedContent.doctors} anchorId="doctors" dictionary={dictionary} />
-        <PricingList items={resolvedContent.pricing} anchorId="pricing" dictionary={dictionary} />
-        <ArticleList items={resolvedContent.articles} anchorId="articles" dictionary={dictionary} />
-        <TriageFlowSection content={resolvedContent} dictionary={dictionary} />
-        {deferredHomeSections.map(({ section, index }) => (
+        {visibility.doctors ? <DoctorList items={resolvedContent.doctors} anchorId="doctors" dictionary={dictionary} /> : null}
+        {visibility.pricing ? <PricingList items={resolvedContent.pricing} anchorId="pricing" dictionary={dictionary} /> : null}
+        {visibility.articles ? <ArticleList items={resolvedContent.articles} anchorId="articles" dictionary={dictionary} /> : null}
+        {visibility.consultationPrep ? <TriageFlowSection content={resolvedContent} dictionary={dictionary} /> : null}
+        {visibleDeferredHomeSections.map(({ section, index }) => (
           <SectionRenderer
             key={section.id}
             section={section}
@@ -793,7 +804,7 @@ export function App() {
             onSectionChange={(nextSection) => updateVisualSection(index, nextSection)}
           />
         ))}
-        <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} />
+        {visibility.serviceList ? <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} /> : null}
         <ContactBand content={resolvedContent} dictionary={dictionary} />
       </PageShell>
     );
@@ -825,22 +836,22 @@ export function App() {
       {heroSections.map(({ section }) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
-      <FeaturedGalleryShowcase items={resolvedContent.gallery} dictionary={dictionary} />
+      {visibility.galleryShowcase ? <FeaturedGalleryShowcase items={resolvedContent.gallery} dictionary={dictionary} /> : null}
       {gallerySections.map(({ section }) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
-      <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} />
+      {visibility.galleryList ? <GalleryList items={resolvedContent.gallery} anchorId="gallery" dictionary={dictionary} /> : null}
       {supportingHomeSections.map(({ section }) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
-      <DoctorList items={resolvedContent.doctors} anchorId="doctors" dictionary={dictionary} />
-      <PricingList items={resolvedContent.pricing} anchorId="pricing" dictionary={dictionary} />
-      <ArticleList items={resolvedContent.articles} anchorId="articles" dictionary={dictionary} />
-      <TriageFlowSection content={resolvedContent} dictionary={dictionary} />
-      {deferredHomeSections.map(({ section }) => (
+      {visibility.doctors ? <DoctorList items={resolvedContent.doctors} anchorId="doctors" dictionary={dictionary} /> : null}
+      {visibility.pricing ? <PricingList items={resolvedContent.pricing} anchorId="pricing" dictionary={dictionary} /> : null}
+      {visibility.articles ? <ArticleList items={resolvedContent.articles} anchorId="articles" dictionary={dictionary} /> : null}
+      {visibility.consultationPrep ? <TriageFlowSection content={resolvedContent} dictionary={dictionary} /> : null}
+      {visibleDeferredHomeSections.map(({ section }) => (
         <SectionRenderer key={section.id} section={section} />
       ))}
-      <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} />
+      {visibility.serviceList ? <ServiceList items={resolvedContent.services} anchorId="services" dictionary={dictionary} /> : null}
       <ContactBand content={resolvedContent} dictionary={dictionary} />
     </PageShell>
   );

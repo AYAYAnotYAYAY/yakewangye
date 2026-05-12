@@ -834,6 +834,21 @@ function ChipsField(props: {
   );
 }
 
+function ToggleField(props: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="admin-toggle-field">
+      <span>{props.label}</span>
+      <input type="checkbox" checked={props.checked} onChange={(event) => props.onChange(event.target.checked)} />
+    </label>
+  );
+}
+
+type SectionVisibilityKey = keyof CmsContent["siteSettings"]["sectionVisibility"];
+
 function AdminLogin(props: {
   status: AdminStatus;
   loading: boolean;
@@ -1020,6 +1035,19 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
 
   const updateDraft = (mutator: (current: CmsContent) => CmsContent) => {
     setDraft((current) => updateLocalizedContentDraft(current, editingLanguage, mutator));
+  };
+
+  const updateSectionVisibility = (key: SectionVisibilityKey, checked: boolean) => {
+    setDraft((current) => ({
+      ...current,
+      siteSettings: {
+        ...current.siteSettings,
+        sectionVisibility: {
+          ...current.siteSettings.sectionVisibility,
+          [key]: checked,
+        },
+      },
+    }));
   };
 
   const openAdminTab = (tab: TabKey) => {
@@ -1978,6 +2006,56 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                     }))
                   }
                 />
+              </div>
+              <div className="admin-subsection">
+                <h3>首页模块显示</h3>
+                <div className="admin-toggle-grid">
+                  <ToggleField
+                    label="首页相册精选"
+                    checked={draft.siteSettings.sectionVisibility.galleryShowcase}
+                    onChange={(checked) => updateSectionVisibility("galleryShowcase", checked)}
+                  />
+                  <ToggleField
+                    label="完整图册列表"
+                    checked={draft.siteSettings.sectionVisibility.galleryList}
+                    onChange={(checked) => updateSectionVisibility("galleryList", checked)}
+                  />
+                  <ToggleField
+                    label="咨询前准备"
+                    checked={draft.siteSettings.sectionVisibility.consultationPrep}
+                    onChange={(checked) => updateSectionVisibility("consultationPrep", checked)}
+                  />
+                  <ToggleField
+                    label="首页服务卡片"
+                    checked={draft.siteSettings.sectionVisibility.homeServices}
+                    onChange={(checked) => updateSectionVisibility("homeServices", checked)}
+                  />
+                  <ToggleField
+                    label="跨境与本地就诊流程"
+                    checked={draft.siteSettings.sectionVisibility.homeJourney}
+                    onChange={(checked) => updateSectionVisibility("homeJourney", checked)}
+                  />
+                  <ToggleField
+                    label="医生介绍"
+                    checked={draft.siteSettings.sectionVisibility.doctors}
+                    onChange={(checked) => updateSectionVisibility("doctors", checked)}
+                  />
+                  <ToggleField
+                    label="牙科服务项目"
+                    checked={draft.siteSettings.sectionVisibility.serviceList}
+                    onChange={(checked) => updateSectionVisibility("serviceList", checked)}
+                  />
+                  <ToggleField
+                    label="价格说明"
+                    checked={draft.siteSettings.sectionVisibility.pricing}
+                    onChange={(checked) => updateSectionVisibility("pricing", checked)}
+                  />
+                  <ToggleField
+                    label="文章内容"
+                    checked={draft.siteSettings.sectionVisibility.articles}
+                    onChange={(checked) => updateSectionVisibility("articles", checked)}
+                  />
+                </div>
               </div>
               <div className="admin-subsection">
                 <h3>导航文案</h3>

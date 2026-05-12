@@ -18,6 +18,29 @@ export const siteSettingsSchema = z.object({
   brandName: z.string(),
   topbarNotice: z.string(),
   footerDescription: z.string(),
+  sectionVisibility: z
+    .object({
+      galleryShowcase: z.boolean().default(true),
+      galleryList: z.boolean().default(false),
+      consultationPrep: z.boolean().default(true),
+      homeServices: z.boolean().default(true),
+      homeJourney: z.boolean().default(true),
+      doctors: z.boolean().default(true),
+      serviceList: z.boolean().default(true),
+      pricing: z.boolean().default(true),
+      articles: z.boolean().default(true),
+    })
+    .default({
+      galleryShowcase: true,
+      galleryList: false,
+      consultationPrep: true,
+      homeServices: true,
+      homeJourney: true,
+      doctors: true,
+      serviceList: true,
+      pricing: true,
+      articles: true,
+    }),
   primaryContact: z.object({
     phone: z.string(),
     address: z.string(),
@@ -445,6 +468,17 @@ const siteSettingsSeed: SiteSettings = {
   topbarNotice: "俄语/中文/英语站点、多语言 SEO、AI 导诊与 Telegram 转化系统",
   footerDescription:
     "这是第一版可运行骨架，目标是为后续 CMS、AI 问诊、文章发布、访客分析与 CRM 打下稳定基础。",
+  sectionVisibility: {
+    galleryShowcase: true,
+    galleryList: false,
+    consultationPrep: true,
+    homeServices: true,
+    homeJourney: true,
+    doctors: true,
+    serviceList: true,
+    pricing: true,
+    articles: true,
+  },
   primaryContact: {
     phone: "+86 9619527988",
     address: "黑龙江省黑河市爱辉区花园街道环城东路33号",

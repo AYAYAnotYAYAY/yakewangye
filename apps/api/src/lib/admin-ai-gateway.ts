@@ -78,6 +78,8 @@ type MediaAnalysisInput = {
 };
 
 const AI_DRAFT_MEDIA_ASSET_LIMIT = Math.max(8, Number(process.env.AI_DRAFT_MEDIA_ASSET_LIMIT ?? 28) || 28);
+const AI_TRANSLATION_BATCH_CHAR_LIMIT = Math.max(1800, Number(process.env.AI_TRANSLATION_BATCH_CHAR_LIMIT ?? 4200) || 4200);
+const AI_TRANSLATION_FIELD_CHAR_LIMIT = Math.max(240, Number(process.env.AI_TRANSLATION_FIELD_CHAR_LIMIT ?? 700) || 700);
 
 function truncateText(value: string | undefined, maxLength: number) {
   const normalized = (value ?? "").replace(/\s+/g, " ").trim();
@@ -86,6 +88,14 @@ function truncateText(value: string | undefined, maxLength: number) {
 
 function compactArray(values: string[] | undefined, limit: number, maxItemLength: number) {
   return (values ?? []).slice(0, limit).map((value) => truncateText(value, maxItemLength)).filter(Boolean);
+}
+
+function instructionRequiresMediaAssets(instruction: string, mediaLibrary: MediaLibraryState) {
+  if (mediaLibrary.assets.length <= 1) {
+    return mediaLibrary.assets.length === 1;
+  }
+
+  return /素材|图片|照片|视频|相册|图册|展示|封面|环境|media|image|photo|video|gallery/i.test(instruction);
 }
 
 function deepClone<T>(value: T): T {
@@ -585,7 +595,21 @@ function buildAiPrompt(params: {
   language: Language;
 }) {
   const allowedUpdates = buildAllowedUpdates(resolveContentForLanguage(params.content, params.language));
-  const mediaAssets = buildCompactMediaAssets(params.mediaLibrary);
+  const shouldIncludeMedia = instructionRequiresMediaAssets(params.instruction, params.mediaLibrary);
+  const mediaAssets = shouldIncludeMedia ? buildCompactMediaAssets(params.mediaLibrary) : [];
+  const mediaRules = shouldIncludeMedia
+    ? [
+        "4. 你必须认真阅读 mediaAssets 的 aiSummary、visualDescription、tags、suggestedUseCases、placementSuggestions；如果素材明显代表一个当前网站没有的新牙科服务、医院环境、住宿环境、路线/翻译支持或展示内容，不要硬塞进已有服务，应该使用 create.services 或 create.gallery 新增内容。",
+        "5. 可以改写文案、SEO、服务介绍、流程表达，也可以根据素材 AI 标注选择合适素材 URL 填到 media 类型 path。",
+        "6. media 类型 path 和新增内容里的素材 URL 只能使用 mediaAssets 里已有的 url，不要编造外链。服务 image 必须用图片；图册 imageUrl 可以用图片或视频。",
+        "7. 如果素材没有 aiSummary，说明还没有做 AI 素材分析，优先使用已有分析结果的素材。",
+        "8. 新增内容必须只围绕牙科治疗、门诊环境、就诊流程、住宿环境、路线/翻译/跨境就诊支持，不要新增无关营销栏目。",
+        "9. 不要重复新增已有服务；只有素材 AI 标注提供了明确的新主题或管理员明确要求新增时才新增。",
+      ]
+    : [
+        "4. 本次是纯文字改稿，未加载素材库上下文。不要新增或替换图片/视频，不要使用 create.services/create.gallery，除非管理员需求明确要求素材。",
+        "5. 可以改写文案、SEO、服务介绍、流程表达。",
+      ];
 
   return [
     "你是泉寓门诊网站的 AI 改版助手，负责根据管理员需求生成网站内容和素材使用草稿。",
@@ -594,13 +618,8 @@ function buildAiPrompt(params: {
     "1. 修改已有内容时，只允许使用 allowedUpdates 中列出的 path。",
     "2. 不允许修改 id、slug、href、电话、地址、Telegram、AI 配置、API Key、模型配置。",
     "3. 不允许编造医生资历、价格承诺、治疗效果、法律承诺。",
-    "4. 你必须认真阅读 mediaAssets 的 aiSummary、visualDescription、tags、suggestedUseCases、placementSuggestions；如果素材明显代表一个当前网站没有的新牙科服务、医院环境、住宿环境、路线/翻译支持或展示内容，不要硬塞进已有服务，应该使用 create.services 或 create.gallery 新增内容。",
-    "5. 可以改写文案、SEO、服务介绍、流程表达，也可以根据素材 AI 标注选择合适素材 URL 填到 media 类型 path。",
-    "6. media 类型 path 和新增内容里的素材 URL 只能使用 mediaAssets 里已有的 url，不要编造外链。服务 image 必须用图片；图册 imageUrl 可以用图片或视频。",
-    "7. 输出语言必须匹配 language。",
-    "8. 如果素材没有 aiSummary，说明还没有做 AI 素材分析，优先使用已有分析结果的素材。",
-    "9. 新增内容必须只围绕牙科治疗、门诊环境、就诊流程、住宿环境、路线/翻译/跨境就诊支持，不要新增无关营销栏目。",
-    "10. 不要重复新增已有服务；只有素材 AI 标注提供了明确的新主题或管理员明确要求新增时才新增。",
+    ...mediaRules,
+    "10. 输出语言必须匹配 language。",
     "",
     `language: ${params.language}`,
     `管理员需求: ${params.instruction}`,
@@ -608,23 +627,27 @@ function buildAiPrompt(params: {
     "返回格式：",
     '{"notes":["这次改动的简短说明"],"changes":[{"path":"allowed.path","value":"新内容"},{"path":"create.services","value":{"name":"服务名称","category":"分类","summary":"摘要","details":"详情","image":"/uploads/example.jpg"}},{"path":"create.gallery","value":{"title":"展示标题","summary":"展示摘要","imageUrl":"/uploads/example.mp4"}}]}',
     "",
-    "可新增内容：",
-    JSON.stringify(
-      [
-        {
-          path: "create.services",
-          useWhen: "素材 AI 标注显示这是一个当前 services 列表没有覆盖的新牙科服务或服务场景。",
-          valueSchema: { name: "服务名称", category: "服务分类", summary: "短摘要", details: "详细介绍", image: "mediaAssets 中的图片 url" },
-        },
-        {
-          path: "create.gallery",
-          useWhen: "素材 AI 标注显示这是适合展示的医院环境、治疗场景、住宿环境、路线/翻译支持、设备或视频。",
-          valueSchema: { title: "图册标题", summary: "展示说明", imageUrl: "mediaAssets 中的图片或视频 url" },
-        },
-      ],
-      null,
-      2,
-    ),
+    shouldIncludeMedia
+      ? [
+          "可新增内容：",
+          JSON.stringify(
+            [
+              {
+                path: "create.services",
+                useWhen: "素材 AI 标注显示这是一个当前 services 列表没有覆盖的新牙科服务或服务场景。",
+                valueSchema: { name: "服务名称", category: "服务分类", summary: "短摘要", details: "详细介绍", image: "mediaAssets 中的图片 url" },
+              },
+              {
+                path: "create.gallery",
+                useWhen: "素材 AI 标注显示这是适合展示的医院环境、治疗场景、住宿环境、路线/翻译支持、设备或视频。",
+                valueSchema: { title: "图册标题", summary: "展示说明", imageUrl: "mediaAssets 中的图片或视频 url" },
+              },
+            ],
+            null,
+            2,
+          ),
+        ].join("\n")
+      : "mediaAssets: 本次未加载素材库上下文，避免纯文字任务 token 超限。",
     "",
     "allowedUpdates:",
     JSON.stringify(
@@ -638,16 +661,14 @@ function buildAiPrompt(params: {
       2,
     ),
     "",
-    "mediaAssets:",
-    JSON.stringify(mediaAssets, null, 2),
+    shouldIncludeMedia ? ["mediaAssets:", JSON.stringify(mediaAssets, null, 2)].join("\n") : "",
   ].join("\n");
 }
 
 function buildTranslationPrompt(params: {
-  content: CmsContent;
   targetLanguage: Exclude<Language, "zh">;
+  sourceUpdates: AllowedUpdate[];
 }) {
-  const sourceUpdates = buildAllowedUpdates(resolveContentForLanguage(params.content, "zh")).filter((update) => update.kind === "text");
   const targetName = params.targetLanguage === "ru" ? "俄语" : "英语";
 
   return [
@@ -667,15 +688,41 @@ function buildTranslationPrompt(params: {
     "",
     "sourceTexts:",
     JSON.stringify(
-      sourceUpdates.map((update) => ({
+      params.sourceUpdates.map((update) => ({
         path: update.path,
         label: update.label,
-        value: truncateText(update.currentValue, 1200),
+        value: truncateText(update.currentValue, AI_TRANSLATION_FIELD_CHAR_LIMIT),
       })),
       null,
       2,
     ),
   ].join("\n");
+}
+
+function buildTranslationBatches(content: CmsContent) {
+  const updates = buildAllowedUpdates(resolveContentForLanguage(content, "zh")).filter((update) => update.kind === "text");
+  const batches: AllowedUpdate[][] = [];
+  let currentBatch: AllowedUpdate[] = [];
+  let currentLength = 0;
+
+  for (const update of updates) {
+    const nextLength = Math.min(update.currentValue.length, AI_TRANSLATION_FIELD_CHAR_LIMIT) + update.path.length + update.label.length + 40;
+
+    if (currentBatch.length && currentLength + nextLength > AI_TRANSLATION_BATCH_CHAR_LIMIT) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentLength = 0;
+    }
+
+    currentBatch.push(update);
+    currentLength += nextLength;
+  }
+
+  if (currentBatch.length) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
 }
 
 function buildVisualAiPrompt(params: {
@@ -1403,27 +1450,35 @@ export async function translateWebsiteFromChinese(params: {
   const notes: string[] = [];
 
   for (const targetLanguage of params.targetLanguages) {
-    const prompt = buildTranslationPrompt({
-      content: nextContent,
-      targetLanguage,
-    });
-    const raw =
-      params.config.provider === "openai_responses"
-        ? await callResponsesDraft(params.config, prompt)
-        : await callChatDraft(params.config, prompt);
-    const parsed = await parseAiDraftPayloadWithRepair(raw, params.config);
-    const applied = applyChanges({
-      content: nextContent,
-      language: targetLanguage,
-      changes: parsed.changes,
-      mediaLibrary: { folders: [], assets: [] },
-    });
+    const batches = buildTranslationBatches(nextContent);
+    let returnedChanges = 0;
+    let appliedChanges = 0;
 
-    nextContent = applied.content;
-    notes.push(
-      ...parsed.notes,
-      `${targetLanguage === "ru" ? "俄语" : "英语"}翻译返回 ${parsed.changes.length} 项，实际应用 ${applied.appliedPaths.length} 项。`,
-    );
+    for (const [batchIndex, sourceUpdates] of batches.entries()) {
+      const prompt = buildTranslationPrompt({
+        targetLanguage,
+        sourceUpdates,
+      });
+      const raw =
+        params.config.provider === "openai_responses"
+          ? await callResponsesDraft(params.config, prompt)
+          : await callChatDraft(params.config, prompt);
+      const parsed = await parseAiDraftPayloadWithRepair(raw, params.config);
+      const applied = applyChanges({
+        content: nextContent,
+        language: targetLanguage,
+        changes: parsed.changes,
+        mediaLibrary: { folders: [], assets: [] },
+      });
+
+      nextContent = applied.content;
+      returnedChanges += parsed.changes.length;
+      appliedChanges += applied.appliedPaths.length;
+      notes.push(...parsed.notes.slice(0, 2));
+      notes.push(`${targetLanguage === "ru" ? "俄语" : "英语"}第 ${batchIndex + 1}/${batches.length} 批翻译完成。`);
+    }
+
+    notes.push(`${targetLanguage === "ru" ? "俄语" : "英语"}翻译合计返回 ${returnedChanges} 项，实际应用 ${appliedChanges} 项。`);
   }
 
   return {
