@@ -79,8 +79,9 @@ type MediaAnalysisInput = {
 
 const AI_DRAFT_MEDIA_ASSET_LIMIT = Math.max(8, Number(process.env.AI_DRAFT_MEDIA_ASSET_LIMIT ?? 28) || 28);
 const AI_DRAFT_ALLOWED_UPDATE_LIMIT = Math.max(16, Number(process.env.AI_DRAFT_ALLOWED_UPDATE_LIMIT ?? 56) || 56);
-const AI_TRANSLATION_BATCH_CHAR_LIMIT = Math.max(1800, Number(process.env.AI_TRANSLATION_BATCH_CHAR_LIMIT ?? 4200) || 4200);
-const AI_TRANSLATION_FIELD_CHAR_LIMIT = Math.max(240, Number(process.env.AI_TRANSLATION_FIELD_CHAR_LIMIT ?? 700) || 700);
+const AI_TRANSLATION_BATCH_CHAR_LIMIT = Math.max(600, Number(process.env.AI_TRANSLATION_BATCH_CHAR_LIMIT ?? 1200) || 1200);
+const AI_TRANSLATION_FIELD_CHAR_LIMIT = Math.max(160, Number(process.env.AI_TRANSLATION_FIELD_CHAR_LIMIT ?? 500) || 500);
+const AI_TRANSLATION_OUTPUT_TOKENS = Math.max(2048, Number(process.env.AI_TRANSLATION_OUTPUT_TOKENS ?? 12000) || 12000);
 
 function truncateText(value: string | undefined, maxLength: number) {
   const normalized = (value ?? "").replace(/\s+/g, " ").trim();
@@ -95,6 +96,13 @@ function getConfiguredOutputTokens(config: AiConfig, fallback: number) {
   const parsed = Number(config.maxTokens);
   const value = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
   return Math.max(256, value);
+}
+
+function withMinimumOutputTokens(config: AiConfig, minTokens: number): AiConfig {
+  return {
+    ...config,
+    maxTokens: Math.max(config.maxTokens, minTokens),
+  };
 }
 
 function instructionRequiresMediaAssets(instruction: string, mediaLibrary: MediaLibraryState) {
@@ -1542,6 +1550,7 @@ export async function translateWebsiteFromChinese(params: {
 
   let nextContent = params.content;
   const notes: string[] = [];
+  const translationConfig = withMinimumOutputTokens(params.config, AI_TRANSLATION_OUTPUT_TOKENS);
 
   for (const targetLanguage of params.targetLanguages) {
     const batches = buildTranslationBatches(nextContent);
@@ -1554,10 +1563,10 @@ export async function translateWebsiteFromChinese(params: {
         sourceUpdates,
       });
       const raw =
-        params.config.provider === "openai_responses"
-          ? await callResponsesDraft(params.config, prompt)
-          : await callChatDraft(params.config, prompt);
-      const parsed = await parseAiDraftPayloadWithRepair(raw, params.config);
+        translationConfig.provider === "openai_responses"
+          ? await callResponsesDraft(translationConfig, prompt)
+          : await callChatDraft(translationConfig, prompt);
+      const parsed = await parseAiDraftPayloadWithRepair(raw, translationConfig);
       const applied = applyChanges({
         content: nextContent,
         language: targetLanguage,

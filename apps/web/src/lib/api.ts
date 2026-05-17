@@ -190,6 +190,20 @@ type AiSiteDraftJobResponse = {
   };
 };
 
+type AiTranslateJobResponse = {
+  ok: true;
+  job: {
+    id: string;
+    status: "queued" | "running" | "completed" | "failed";
+    createdAt: string;
+    updatedAt: string;
+    targetLanguages: Array<"ru" | "en">;
+    content?: CmsContent;
+    notes: string[];
+    error?: string;
+  };
+};
+
 function getUploadErrorMessage(
   payload:
     | { error?: string; maxSizeMb?: number; receivedBytes?: number }
@@ -722,7 +736,7 @@ export async function fetchVisitorLogs(token: string, filters: VisitorLogFilters
 }
 
 export async function translateFromChinese(payload: { content: CmsContent; targetLanguages: Array<"ru" | "en"> }, token: string) {
-  const response = await fetchWithFallback("/api/admin/ai/translate-from-zh", {
+  const response = await fetchWithFallback("/api/admin/ai/translate-from-zh-jobs", {
     method: "POST",
     headers: {
       ...createAdminHeaders(token),
@@ -735,11 +749,36 @@ export async function translateFromChinese(payload: { content: CmsContent; targe
     throw new Error(await parseErrorMessage(response, "ai_translate_from_zh_failed"));
   }
 
-  return (await response.json()) as {
-    ok: true;
-    content: CmsContent;
-    notes: string[];
-  };
+  const started = (await response.json()) as AiTranslateJobResponse;
+  const jobId = started.job.id;
+
+  for (let attempt = 0; attempt < 360; attempt += 1) {
+    await wait(attempt === 0 ? 800 : 2000);
+
+    const statusResponse = await fetchWithFallback(`/api/admin/ai/translate-from-zh-jobs/${encodeURIComponent(jobId)}`, {
+      headers: createAdminHeaders(token),
+    });
+
+    if (!statusResponse.ok) {
+      throw new Error(await parseErrorMessage(statusResponse, "ai_translate_from_zh_status_failed"));
+    }
+
+    const status = (await statusResponse.json()) as AiTranslateJobResponse;
+
+    if (status.job.status === "completed" && status.job.content) {
+      return {
+        ok: true,
+        content: status.job.content,
+        notes: status.job.notes,
+      };
+    }
+
+    if (status.job.status === "failed") {
+      throw new Error(status.job.error || "ai_translate_from_zh_failed");
+    }
+  }
+
+  throw new Error("ai_translate_from_zh_timeout: 后台 AI 翻译任务超过 12 分钟仍未完成。");
 }
 
 export async function testAiConfig(config: AiConfig, token: string) {

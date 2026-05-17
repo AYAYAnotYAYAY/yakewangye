@@ -92,6 +92,17 @@ type AiSiteDraftJob = {
   error?: string;
 };
 
+type AiTranslateJob = {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  createdAt: string;
+  updatedAt: string;
+  targetLanguages: Array<Exclude<Language, "zh">>;
+  content?: CmsContent;
+  notes?: string[];
+  error?: string;
+};
+
 const aiWebsiteDraftForAssetSchema = z.object({
   content: cmsContentSchema,
   instruction: z.string().trim().min(1).max(2000),
@@ -118,6 +129,7 @@ const VISUAL_AI_MAX_SCREENSHOTS = Math.max(1, Number(process.env.VISUAL_AI_MAX_S
 const AI_SITE_DRAFT_JOB_TTL_MS = Math.max(10 * 60 * 1000, Number(process.env.AI_SITE_DRAFT_JOB_TTL_MS ?? 60 * 60 * 1000) || 60 * 60 * 1000);
 
 const aiSiteDraftJobs = new Map<string, AiSiteDraftJob>();
+const aiTranslateJobs = new Map<string, AiTranslateJob>();
 
 function serializeAiSiteDraftJob(job: AiSiteDraftJob) {
   return {
@@ -140,6 +152,57 @@ function cleanupAiSiteDraftJobs() {
     if (now - new Date(job.updatedAt).getTime() > AI_SITE_DRAFT_JOB_TTL_MS) {
       aiSiteDraftJobs.delete(id);
     }
+  }
+}
+
+function serializeAiTranslateJob(job: AiTranslateJob) {
+  return {
+    id: job.id,
+    status: job.status,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    targetLanguages: job.targetLanguages,
+    content: job.status === "completed" ? job.content : undefined,
+    notes: job.notes ?? [],
+    error: job.error,
+  };
+}
+
+function cleanupAiTranslateJobs() {
+  const now = Date.now();
+
+  for (const [id, job] of aiTranslateJobs.entries()) {
+    if (now - new Date(job.updatedAt).getTime() > AI_SITE_DRAFT_JOB_TTL_MS) {
+      aiTranslateJobs.delete(id);
+    }
+  }
+}
+
+async function runAiTranslateJob(jobId: string, input: { content: CmsContent; targetLanguages: Array<Exclude<Language, "zh">> }) {
+  const job = aiTranslateJobs.get(jobId);
+
+  if (!job) {
+    return;
+  }
+
+  job.status = "running";
+  job.updatedAt = new Date().toISOString();
+
+  try {
+    const result = await translateWebsiteFromChinese({
+      config: input.content.aiConfig,
+      content: input.content,
+      targetLanguages: input.targetLanguages,
+    });
+
+    job.status = "completed";
+    job.content = result.content;
+    job.notes = result.notes;
+    job.updatedAt = new Date().toISOString();
+  } catch (error) {
+    job.status = "failed";
+    job.error = error instanceof Error ? error.message : String(error);
+    job.updatedAt = new Date().toISOString();
   }
 }
 
@@ -878,6 +941,75 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  });
+
+  app.post("/api/admin/ai/translate-from-zh-jobs", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const parsed = aiTranslateFromZhSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.flatten(),
+      });
+    }
+
+    cleanupAiTranslateJobs();
+
+    const now = new Date().toISOString();
+    const job: AiTranslateJob = {
+      id: randomUUID(),
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+      targetLanguages: parsed.data.targetLanguages,
+    };
+
+    aiTranslateJobs.set(job.id, job);
+    void runAiTranslateJob(job.id, parsed.data);
+
+    return reply.status(202).send({
+      ok: true,
+      job: serializeAiTranslateJob(job),
+    });
+  });
+
+  app.get("/api/admin/ai/translate-from-zh-jobs/:id", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const params = z.object({ id: z.string().trim().min(1) }).safeParse(request.params);
+
+    if (!params.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: params.error.flatten(),
+      });
+    }
+
+    cleanupAiTranslateJobs();
+
+    const job = aiTranslateJobs.get(params.data.id);
+
+    if (!job) {
+      return reply.status(404).send({
+        ok: false,
+        error: "ai_translate_job_not_found",
+      });
+    }
+
+    return {
+      ok: true,
+      job: serializeAiTranslateJob(job),
+    };
   });
 
   app.post("/api/admin/ai/test", async (request, reply) => {

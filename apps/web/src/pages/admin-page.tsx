@@ -190,12 +190,12 @@ function formatAdminError(error: unknown) {
     return "AI 返回的内容不是合格 JSON，系统已尝试自动修复但仍失败。请把需求写短一点，或先运行素材库 AI 分析后再重试。";
   }
 
-  if (/context|token|too large|request entity too large|maximum|大小|超/i.test(raw)) {
-    return "本次请求内容太大。请减少截图数量/图片大小，或先用素材库的“AI 分析未处理素材”，再用纯文字让 AI 根据素材描述改站。";
-  }
-
   if (/AI provider error|provider error|response_format|max_tokens|model/i.test(raw)) {
     return raw;
+  }
+
+  if (/context|token|too large|request entity too large|maximum|大小|超/i.test(raw)) {
+    return "本次 AI 请求超过模型或网关可处理范围。网站已改为后台任务和小批次处理；如果仍出现，请降低单次任务范围或查看这里显示的供应商原始报错。";
   }
 
   if (/ai_site_draft_failed|ai_site_draft_media_asset_failed|visual_ai_draft_failed|generate_ai_site_draft_failed|generate_ai_site_draft_media_asset_failed/i.test(raw)) {
