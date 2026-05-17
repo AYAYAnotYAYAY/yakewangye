@@ -129,8 +129,12 @@ function createId(prefix: string) {
 }
 
 function createAiPresetFromConfig(config: AiConfig, name: string): AiPreset {
+  return createAiPresetSnapshot(config, createId("ai-preset"), name);
+}
+
+function createAiPresetSnapshot(config: AiConfig, id: string, name: string): AiPreset {
   return {
-    id: createId("ai-preset"),
+    id,
     name,
     provider: config.provider,
     endpoint: config.endpoint,
@@ -990,6 +994,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const [translatingFromZh, setTranslatingFromZh] = useState(false);
   const [testingAiConfig, setTestingAiConfig] = useState(false);
   const [showAiApiKey, setShowAiApiKey] = useState(false);
+  const [aiPresetName, setAiPresetName] = useState("");
   const [aiSiteInstruction, setAiSiteInstruction] = useState(
     "根据当前素材库，优化首页首屏、服务卡片、流程说明和图册文案，让网站更像真实牙科门诊官网，并更适合俄罗斯/中国患者咨询转化。",
   );
@@ -1011,6 +1016,10 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
   const aiCopyFileInputRef = useRef<HTMLInputElement | null>(null);
   const externalAiInstructions = buildExternalAiInstructions(draft, mediaLibrary);
   const localizedDraft = useMemo(() => resolveContentForLanguage(draft, editingLanguage), [draft, editingLanguage]);
+  const selectedAiPreset = useMemo(
+    () => draft.aiConfig.presets?.find((preset) => preset.id === draft.aiConfig.activePresetId),
+    [draft.aiConfig.activePresetId, draft.aiConfig.presets],
+  );
   const isLocalizedEditing = editingLanguage !== DEFAULT_LANGUAGE;
   const dirtyLanguages = useMemo(() => {
     const result: Record<Language, boolean> = {
@@ -1088,6 +1097,10 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
       setSelectedAiDiffIds([]);
     }
   }, [editingLanguage, pendingAiImport]);
+
+  useEffect(() => {
+    setAiPresetName(selectedAiPreset?.name ?? "");
+  }, [selectedAiPreset?.id, selectedAiPreset?.name]);
 
   useEffect(() => {
     return () => {
@@ -1482,14 +1495,10 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     }
   };
 
-  const handleSaveCurrentAiPreset = () => {
-    const name = window.prompt("给当前 AI 配置预设起个名字", draft.aiConfig.model || "新预设")?.trim();
-
-    if (!name) {
-      return;
-    }
-
+  const handleCreateAiPreset = () => {
+    const name = aiPresetName.trim() || draft.aiConfig.model.trim() || "新预设";
     const preset = createAiPresetFromConfig(draft.aiConfig, name);
+
     setDraft((current) => ({
       ...current,
       aiConfig: {
@@ -1498,9 +1507,46 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
         presets: [...(current.aiConfig.presets ?? []), preset],
       },
     }));
+    setAiPresetName(name);
+    window.alert("已保存为新的 AI 配置预设。还需要点击顶部“保存全部内容”才会永久写入后台。");
+  };
+
+  const handleUpdateAiPreset = () => {
+    const presetId = draft.aiConfig.activePresetId;
+
+    if (!presetId) {
+      window.alert("请先选择一个要更新的 AI 配置预设。");
+      return;
+    }
+
+    const name = aiPresetName.trim() || selectedAiPreset?.name || draft.aiConfig.model.trim() || "未命名预设";
+    const nextPreset = createAiPresetSnapshot(draft.aiConfig, presetId, name);
+
+    setDraft((current) => ({
+      ...current,
+      aiConfig: {
+        ...current.aiConfig,
+        activePresetId: presetId,
+        presets: (current.aiConfig.presets ?? []).map((preset) => (preset.id === presetId ? nextPreset : preset)),
+      },
+    }));
+    setAiPresetName(name);
+    window.alert("已更新当前 AI 配置预设。还需要点击顶部“保存全部内容”才会永久写入后台。");
   };
 
   const handleApplyAiPreset = (presetId: string) => {
+    if (!presetId) {
+      setDraft((current) => ({
+        ...current,
+        aiConfig: {
+          ...current.aiConfig,
+          activePresetId: undefined,
+        },
+      }));
+      setAiPresetName("");
+      return;
+    }
+
     const preset = draft.aiConfig.presets?.find((item) => item.id === presetId);
 
     if (!preset) {
@@ -1511,6 +1557,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
       ...current,
       aiConfig: applyAiPresetToConfig(current.aiConfig, preset),
     }));
+    setAiPresetName(preset.name);
   };
 
   const handleDeleteAiPreset = () => {
@@ -1583,6 +1630,12 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
     }
   };
 
+  const renderTranslateZhButton = (className = "button secondary") => (
+    <button className={className} onClick={handleTranslateZhToRuEn} type="button" disabled={translatingFromZh || saving}>
+      {translatingFromZh ? "翻译中..." : "中文一键翻译俄语/英语"}
+    </button>
+  );
+
   return (
     <div className="container admin-page">
       <div className="admin-header card">
@@ -1612,9 +1665,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             <div className="entity-note">
               {dirtyLanguageCount ? `未保存语言：${SUPPORTED_LANGUAGES.filter((language) => dirtyLanguages[language]).map((language) => ADMIN_LANGUAGE_LABELS[language]).join(" / ")}` : "当前三种语言都已保存"}
             </div>
-            <button className="button secondary" onClick={handleTranslateZhToRuEn} type="button" disabled={translatingFromZh || saving}>
-              {translatingFromZh ? "翻译中..." : "中文一键翻译 RU/EN"}
-            </button>
+            {renderTranslateZhButton()}
           </div>
         </div>
         <div className="admin-header-actions">
@@ -1819,6 +1870,7 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
               <div className="admin-toolbar">
                 <h3>AI 改稿工作流</h3>
                 <div className="admin-entity-actions">
+                  {renderTranslateZhButton()}
                   <button className="button secondary" onClick={handleCopyInstructions} type="button" disabled={copyingInstructions}>
                     {copyingInstructions ? "复制中..." : "复制外部 AI 指令"}
                   </button>
@@ -1837,6 +1889,9 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
               </div>
               <div className="entity-note">
                 可以继续用导出/导入文案包，也可以直接让后台调用已配置的 AI 生成草稿。AI 返回后会进入差异预览，你确认后才会应用到网站。
+              </div>
+              <div className="entity-note">
+                “中文一键翻译俄语/英语”会只读取当前中文主内容，生成俄语和英语覆盖层；它不会把素材图片或视频文件发给 AI。
               </div>
               <label className="admin-field admin-full-span">
                 <span>直接发给网站 AI 的改版需求</span>
@@ -2087,13 +2142,16 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
             <div className="card admin-panel">
               <div className="admin-toolbar">
                 <h2>AI 配置与提示词</h2>
-                <button className="button secondary" onClick={handleTestAiConfig} type="button" disabled={testingAiConfig}>
-                  {testingAiConfig ? "测试中..." : "测试 AI 连接"}
-                </button>
+                <div className="admin-entity-actions">
+                  {renderTranslateZhButton()}
+                  <button className="button secondary" onClick={handleTestAiConfig} type="button" disabled={testingAiConfig}>
+                    {testingAiConfig ? "测试中..." : "测试 AI 连接"}
+                  </button>
+                </div>
               </div>
               <div className="admin-ai-preset-bar">
                 <label className="admin-field">
-                  <span>配置预设</span>
+                  <span>选择配置预设</span>
                   <select value={draft.aiConfig.activePresetId ?? ""} onChange={(event) => handleApplyAiPreset(event.target.value)}>
                     <option value="">未选择预设</option>
                     {(draft.aiConfig.presets ?? []).map((preset) => (
@@ -2103,12 +2161,26 @@ function AdminConsole({ content, onSaved, adminToken, username, onLogout }: Admi
                     ))}
                   </select>
                 </label>
-                <button className="button secondary" onClick={handleSaveCurrentAiPreset} type="button">
-                  保存当前为预设
-                </button>
-                <button className="button secondary" onClick={handleDeleteAiPreset} type="button" disabled={!draft.aiConfig.activePresetId}>
-                  删除当前预设
-                </button>
+                <label className="admin-field">
+                  <span>预设名称</span>
+                  <input
+                    value={aiPresetName}
+                    onChange={(event) => setAiPresetName(event.target.value)}
+                    placeholder={draft.aiConfig.model || "例如 DeepSeek 主模型"}
+                  />
+                </label>
+                <div className="admin-ai-preset-actions">
+                  <button className="button secondary" onClick={handleUpdateAiPreset} type="button" disabled={!draft.aiConfig.activePresetId}>
+                    更新当前预设
+                  </button>
+                  <button className="button secondary" onClick={handleCreateAiPreset} type="button">
+                    另存为新预设
+                  </button>
+                  <button className="button secondary" onClick={handleDeleteAiPreset} type="button" disabled={!draft.aiConfig.activePresetId}>
+                    删除当前预设
+                  </button>
+                </div>
+                <p className="entity-note admin-ai-preset-note">这里保存的是 AI 供应商、API 地址、Key、模型和参数。修改预设后仍需点击顶部“保存全部内容”。</p>
               </div>
               <div className="admin-grid">
                 <label className="admin-field">

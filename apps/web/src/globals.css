@@ -1392,7 +1392,7 @@ h1, h2, h3, h4 {
 
 .admin-ai-preset-bar {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) auto auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
   gap: 10px;
   align-items: end;
   margin: 14px 0;
@@ -1400,6 +1400,18 @@ h1, h2, h3, h4 {
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: #f8fafc;
+}
+
+.admin-ai-preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.admin-ai-preset-note {
+  grid-column: 1 / -1;
+  margin: 0;
 }
 
 .admin-toggle-grid {
