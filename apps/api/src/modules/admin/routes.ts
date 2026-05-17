@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { MultipartFile } from "@fastify/multipart";
-import { aiConfigSchema, cmsContentSchema } from "@quanyu/shared";
+import { aiConfigSchema, cmsContentSchema, type CmsContent, type Language } from "@quanyu/shared";
 import { z } from "zod";
 import {
   getAdminStatus,
@@ -78,6 +78,20 @@ const aiWebsiteDraftSchema = z.object({
   language: z.enum(["zh", "ru", "en"]).default("zh"),
 });
 
+type AiWebsiteDraftInput = z.infer<typeof aiWebsiteDraftSchema>;
+
+type AiSiteDraftJob = {
+  id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  createdAt: string;
+  updatedAt: string;
+  instruction: string;
+  language: Language;
+  content?: CmsContent;
+  notes?: string[];
+  error?: string;
+};
+
 const aiWebsiteDraftForAssetSchema = z.object({
   content: cmsContentSchema,
   instruction: z.string().trim().min(1).max(2000),
@@ -101,6 +115,65 @@ const analyzeMediaAssetSchema = z.object({
 
 const VISUAL_AI_MAX_SCREENSHOT_BYTES = Math.max(1, Number(process.env.VISUAL_AI_MAX_SCREENSHOT_MB ?? 8) || 8) * 1024 * 1024;
 const VISUAL_AI_MAX_SCREENSHOTS = Math.max(1, Number(process.env.VISUAL_AI_MAX_SCREENSHOTS ?? 6) || 6);
+const AI_SITE_DRAFT_JOB_TTL_MS = Math.max(10 * 60 * 1000, Number(process.env.AI_SITE_DRAFT_JOB_TTL_MS ?? 60 * 60 * 1000) || 60 * 60 * 1000);
+
+const aiSiteDraftJobs = new Map<string, AiSiteDraftJob>();
+
+function serializeAiSiteDraftJob(job: AiSiteDraftJob) {
+  return {
+    id: job.id,
+    status: job.status,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    instruction: job.instruction,
+    language: job.language,
+    content: job.status === "completed" ? job.content : undefined,
+    notes: job.notes ?? [],
+    error: job.error,
+  };
+}
+
+function cleanupAiSiteDraftJobs() {
+  const now = Date.now();
+
+  for (const [id, job] of aiSiteDraftJobs.entries()) {
+    if (now - new Date(job.updatedAt).getTime() > AI_SITE_DRAFT_JOB_TTL_MS) {
+      aiSiteDraftJobs.delete(id);
+    }
+  }
+}
+
+async function runAiSiteDraftJob(jobId: string, input: AiWebsiteDraftInput) {
+  const job = aiSiteDraftJobs.get(jobId);
+
+  if (!job) {
+    return;
+  }
+
+  job.status = "running";
+  job.updatedAt = new Date().toISOString();
+
+  try {
+    const content = await readContent();
+    const library = await mediaLibraryRepository.getState();
+    const result = await generateWebsiteDraft({
+      config: content.aiConfig,
+      content,
+      mediaLibrary: library,
+      instruction: input.instruction,
+      language: input.language,
+    });
+
+    job.status = "completed";
+    job.content = result.content;
+    job.notes = result.notes;
+    job.updatedAt = new Date().toISOString();
+  } catch (error) {
+    job.status = "failed";
+    job.error = error instanceof Error ? error.message : String(error);
+    job.updatedAt = new Date().toISOString();
+  }
+}
 
 const supportedImageExtensions = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".heic", ".heif"]);
 const supportedVideoExtensions = new Set([".mp4", ".mov", ".m4v", ".webm", ".ogg", ".ogv"]);
@@ -599,6 +672,76 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  });
+
+  app.post("/api/admin/ai/site-draft-jobs", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const parsed = aiWebsiteDraftSchema.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: parsed.error.flatten(),
+      });
+    }
+
+    cleanupAiSiteDraftJobs();
+
+    const now = new Date().toISOString();
+    const job: AiSiteDraftJob = {
+      id: randomUUID(),
+      status: "queued",
+      createdAt: now,
+      updatedAt: now,
+      instruction: parsed.data.instruction,
+      language: parsed.data.language,
+    };
+
+    aiSiteDraftJobs.set(job.id, job);
+    void runAiSiteDraftJob(job.id, parsed.data);
+
+    return reply.status(202).send({
+      ok: true,
+      job: serializeAiSiteDraftJob(job),
+    });
+  });
+
+  app.get("/api/admin/ai/site-draft-jobs/:id", async (request, reply) => {
+    const admin = requireAdmin(request, reply);
+
+    if (!admin || reply.sent) {
+      return;
+    }
+
+    const params = z.object({ id: z.string().trim().min(1) }).safeParse(request.params);
+
+    if (!params.success) {
+      return reply.status(400).send({
+        ok: false,
+        error: params.error.flatten(),
+      });
+    }
+
+    cleanupAiSiteDraftJobs();
+
+    const job = aiSiteDraftJobs.get(params.data.id);
+
+    if (!job) {
+      return reply.status(404).send({
+        ok: false,
+        error: "ai_site_draft_job_not_found",
+      });
+    }
+
+    return {
+      ok: true,
+      job: serializeAiSiteDraftJob(job),
+    };
   });
 
   app.post("/api/admin/ai/site-draft-media-asset", async (request, reply) => {

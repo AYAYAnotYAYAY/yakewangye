@@ -169,6 +169,27 @@ async function parseErrorMessage(response: Response, fallback: string) {
   return `${fallback} (${status})`;
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+type AiSiteDraftJobResponse = {
+  ok: true;
+  job: {
+    id: string;
+    status: "queued" | "running" | "completed" | "failed";
+    createdAt: string;
+    updatedAt: string;
+    instruction: string;
+    language: Language;
+    content?: CmsContent;
+    notes: string[];
+    error?: string;
+  };
+};
+
 function getUploadErrorMessage(
   payload:
     | { error?: string; maxSizeMb?: number; receivedBytes?: number }
@@ -539,7 +560,7 @@ export async function saveContent(content: CmsContent, token: string) {
 }
 
 export async function generateAiSiteDraft(payload: { instruction: string; language: Language }, token: string) {
-  const response = await fetchWithFallback("/api/admin/ai/site-draft", {
+  const response = await fetchWithFallback("/api/admin/ai/site-draft-jobs", {
     method: "POST",
     headers: {
       ...createAdminHeaders(token),
@@ -552,11 +573,36 @@ export async function generateAiSiteDraft(payload: { instruction: string; langua
     throw new Error(await parseErrorMessage(response, "generate_ai_site_draft_failed"));
   }
 
-  return (await response.json()) as {
-    ok: true;
-    content: CmsContent;
-    notes: string[];
-  };
+  const started = (await response.json()) as AiSiteDraftJobResponse;
+  const jobId = started.job.id;
+
+  for (let attempt = 0; attempt < 360; attempt += 1) {
+    await wait(attempt === 0 ? 800 : 2000);
+
+    const statusResponse = await fetchWithFallback(`/api/admin/ai/site-draft-jobs/${encodeURIComponent(jobId)}`, {
+      headers: createAdminHeaders(token),
+    });
+
+    if (!statusResponse.ok) {
+      throw new Error(await parseErrorMessage(statusResponse, "generate_ai_site_draft_status_failed"));
+    }
+
+    const status = (await statusResponse.json()) as AiSiteDraftJobResponse;
+
+    if (status.job.status === "completed" && status.job.content) {
+      return {
+        ok: true,
+        content: status.job.content,
+        notes: status.job.notes,
+      };
+    }
+
+    if (status.job.status === "failed") {
+      throw new Error(status.job.error || "ai_site_draft_failed");
+    }
+  }
+
+  throw new Error("ai_site_draft_timeout: 后台 AI 生成任务超过 12 分钟仍未完成。");
 }
 
 export async function generateAiSiteDraftForMediaAsset(
