@@ -22,6 +22,18 @@ async function bootstrap() {
     bodyLimit: uploadMaxFileSizeMb * 1024 * 1024,
   });
 
+  app.setErrorHandler((error, request, reply) => {
+    request.log.error(error);
+    const detail = error as { statusCode?: number; code?: string; message?: string };
+    const statusCode = detail.statusCode && detail.statusCode >= 400 ? detail.statusCode : 500;
+
+    return reply.status(statusCode).send({
+      ok: false,
+      error: detail.code ?? "internal_server_error",
+      message: detail.message ?? "Internal Server Error",
+    });
+  });
+
   await app.register(cors, {
     origin: true,
   });

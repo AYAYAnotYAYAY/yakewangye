@@ -151,8 +151,22 @@ function createAdminHeaders(token: string, extra?: HeadersInit) {
 }
 
 async function parseErrorMessage(response: Response, fallback: string) {
-  const errorPayload = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
-  return errorPayload?.message || errorPayload?.error || fallback;
+  const status = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
+  const errorPayload = (await response.clone().json().catch(() => null)) as { error?: unknown; message?: unknown; detail?: unknown } | null;
+  const structuredMessage = errorPayload?.message ?? errorPayload?.error ?? errorPayload?.detail;
+
+  if (structuredMessage) {
+    return `${typeof structuredMessage === "string" ? structuredMessage : JSON.stringify(structuredMessage)} (${status})`;
+  }
+
+  const rawText = await response.text().catch(() => "");
+  const normalizedText = rawText.replace(/\s+/g, " ").trim();
+
+  if (normalizedText) {
+    return `${fallback} (${status}): ${normalizedText.slice(0, 1000)}`;
+  }
+
+  return `${fallback} (${status})`;
 }
 
 function getUploadErrorMessage(
