@@ -281,7 +281,7 @@ export const aiConfigPresetSchema = z.object({
   apiKey: z.string(),
   model: z.string(),
   temperature: z.number().min(0).max(2),
-  maxTokens: z.number().int().min(128).max(16000),
+  maxTokens: z.number().int().min(128).max(64000),
 });
 
 export const aiConfigSchema = z.object({
@@ -294,7 +294,7 @@ export const aiConfigSchema = z.object({
   leadPrompt: z.string(),
   fallbackReply: z.string(),
   temperature: z.number().min(0).max(2),
-  maxTokens: z.number().int().min(128).max(16000),
+  maxTokens: z.number().int().min(128).max(64000),
   activePresetId: z.string().optional(),
   presets: z.array(aiConfigPresetSchema).default([]),
 });

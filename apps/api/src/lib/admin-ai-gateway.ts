@@ -78,6 +78,7 @@ type MediaAnalysisInput = {
 };
 
 const AI_DRAFT_MEDIA_ASSET_LIMIT = Math.max(8, Number(process.env.AI_DRAFT_MEDIA_ASSET_LIMIT ?? 28) || 28);
+const AI_DRAFT_ALLOWED_UPDATE_LIMIT = Math.max(16, Number(process.env.AI_DRAFT_ALLOWED_UPDATE_LIMIT ?? 56) || 56);
 const AI_TRANSLATION_BATCH_CHAR_LIMIT = Math.max(1800, Number(process.env.AI_TRANSLATION_BATCH_CHAR_LIMIT ?? 4200) || 4200);
 const AI_TRANSLATION_FIELD_CHAR_LIMIT = Math.max(240, Number(process.env.AI_TRANSLATION_FIELD_CHAR_LIMIT ?? 700) || 700);
 
@@ -88,6 +89,12 @@ function truncateText(value: string | undefined, maxLength: number) {
 
 function compactArray(values: string[] | undefined, limit: number, maxItemLength: number) {
   return (values ?? []).slice(0, limit).map((value) => truncateText(value, maxItemLength)).filter(Boolean);
+}
+
+function getConfiguredOutputTokens(config: AiConfig, fallback: number) {
+  const parsed = Number(config.maxTokens);
+  const value = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
+  return Math.min(64000, Math.max(256, value));
 }
 
 function instructionRequiresMediaAssets(instruction: string, mediaLibrary: MediaLibraryState) {
@@ -588,14 +595,100 @@ function buildCompactMediaAssets(mediaLibrary: MediaLibraryState) {
     }));
 }
 
+function getAllowedUpdateGroup(update: AllowedUpdate) {
+  if (update.path.startsWith("pricing.")) return "pricing";
+  if (update.path.startsWith("services.")) return "services";
+  if (update.path.startsWith("doctors.")) return "doctors";
+  if (update.path.startsWith("gallery.")) return "gallery";
+  if (update.path.startsWith("articles.")) return "articles";
+  if (update.path.startsWith("pages.")) return "pages";
+  if (update.path.startsWith("siteSettings.")) return "site";
+  if (update.path.startsWith("homePage.")) {
+    if (/services|服务卡片/.test(update.label)) return "services";
+    if (/journey|流程|跨境|本地/.test(update.label)) return "journey";
+    if (/gallery|图册|相册|背景图/.test(update.label)) return "gallery";
+    if (/articles|文章/.test(update.label)) return "articles";
+    if (/analytics|指标/.test(update.label)) return "analytics";
+    return "home";
+  }
+  return "other";
+}
+
+function scoreAllowedUpdate(update: AllowedUpdate, instruction: string, shouldIncludeMedia: boolean) {
+  const normalizedInstruction = instruction.toLowerCase();
+  const group = getAllowedUpdateGroup(update);
+  const haystack = `${update.path} ${update.label} ${update.currentValue}`.toLowerCase();
+  let score = 0;
+
+  if (/全站|整个|整体|所有|通篇|主页|首页|文案|标题|seo/i.test(instruction)) {
+    score += group === "home" || group === "site" ? 8 : 2;
+  }
+  if (/服务|项目|治疗|牙齿|口腔|种植|修复|牙片|拍片|诊断|检查|洗牙|拔牙|正畸|牙冠|根管/i.test(instruction)) {
+    score += group === "services" ? 14 : group === "pricing" ? 8 : 0;
+  }
+  if (/价格|收费|费用|报价|金额|元|299|免费|吓退|顾虑|客单/i.test(instruction)) {
+    score += group === "pricing" ? 14 : group === "services" ? 10 : group === "home" ? 3 : 0;
+  }
+  if (/医生|专家|主任|医师|团队/i.test(instruction)) {
+    score += group === "doctors" ? 14 : 0;
+  }
+  if (/相册|图册|图片|照片|视频|素材|展示|封面|环境|背景/i.test(instruction)) {
+    score += group === "gallery" ? 14 : update.kind !== "text" ? 10 : 0;
+  }
+  if (/流程|跨境|本地|路线|翻译|住宿|到诊|预约|咨询前/i.test(instruction)) {
+    score += group === "journey" || group === "home" ? 10 : group === "services" ? 3 : 0;
+  }
+  if (/文章|资讯|科普|博客/i.test(instruction)) {
+    score += group === "articles" ? 14 : 0;
+  }
+  if (/页面|自定义页|落地页/i.test(instruction)) {
+    score += group === "pages" ? 14 : 0;
+  }
+  if (shouldIncludeMedia && update.kind !== "text") {
+    score += 4;
+  }
+
+  const instructionParts = normalizedInstruction
+    .split(/[\s,，。；;：:、"'“”‘’（）()【】\[\]<>《》]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length >= 2);
+
+  for (const part of instructionParts.slice(0, 24)) {
+    if (haystack.includes(part)) {
+      score += Math.min(6, part.length);
+    }
+  }
+
+  return score;
+}
+
+function selectAllowedUpdatesForPrompt(updates: AllowedUpdate[], instruction: string, shouldIncludeMedia: boolean) {
+  const scored = updates
+    .map((update, index) => ({
+      update,
+      index,
+      score: scoreAllowedUpdate(update, instruction, shouldIncludeMedia),
+    }))
+    .filter((item) => item.score > 0);
+
+  const selected = (scored.length ? scored : updates.map((update, index) => ({ update, index, score: 0 })))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, shouldIncludeMedia ? AI_DRAFT_ALLOWED_UPDATE_LIMIT + 24 : AI_DRAFT_ALLOWED_UPDATE_LIMIT)
+    .sort((left, right) => left.index - right.index)
+    .map((item) => item.update);
+
+  return selected.length ? selected : updates.slice(0, AI_DRAFT_ALLOWED_UPDATE_LIMIT);
+}
+
 function buildAiPrompt(params: {
   content: CmsContent;
   mediaLibrary: MediaLibraryState;
   instruction: string;
   language: Language;
 }) {
-  const allowedUpdates = buildAllowedUpdates(resolveContentForLanguage(params.content, params.language));
   const shouldIncludeMedia = instructionRequiresMediaAssets(params.instruction, params.mediaLibrary);
+  const allAllowedUpdates = buildAllowedUpdates(resolveContentForLanguage(params.content, params.language));
+  const allowedUpdates = selectAllowedUpdatesForPrompt(allAllowedUpdates, params.instruction, shouldIncludeMedia);
   const mediaAssets = shouldIncludeMedia ? buildCompactMediaAssets(params.mediaLibrary) : [];
   const mediaRules = shouldIncludeMedia
     ? [
@@ -620,6 +713,7 @@ function buildAiPrompt(params: {
     "3. 不允许编造医生资历、价格承诺、治疗效果、法律承诺。",
     ...mediaRules,
     "10. 输出语言必须匹配 language。",
+    "11. 优先少量精准修改，通常返回 1-8 项 changes；不要为了凑数量重写无关字段。",
     "",
     `language: ${params.language}`,
     `管理员需求: ${params.instruction}`,
@@ -949,7 +1043,7 @@ async function callChatDraft(config: AiConfig, prompt: string) {
   const body = {
     model: config.model,
     temperature: Math.min(config.temperature, 0.7),
-    max_tokens: Math.max(config.maxTokens, 4096),
+    max_tokens: getConfiguredOutputTokens(config, 1600),
     response_format: { type: "json_object" },
     messages: [
       {
@@ -980,7 +1074,7 @@ async function callChatVisualDraft(config: AiConfig, prompt: string, screenshots
   const body = {
     model: config.model,
     temperature: Math.min(config.temperature, 0.7),
-    max_tokens: Math.max(config.maxTokens, 4096),
+    max_tokens: getConfiguredOutputTokens(config, 1600),
     response_format: { type: "json_object" },
     messages: [
       {
@@ -1022,7 +1116,7 @@ async function callResponsesDraft(config: AiConfig, prompt: string) {
   const body = {
     model: config.model,
     temperature: Math.min(config.temperature, 0.7),
-    max_output_tokens: Math.max(config.maxTokens, 4096),
+    max_output_tokens: getConfiguredOutputTokens(config, 1600),
     instructions: "你是网站 CMS 改版助手。只返回 JSON。",
     input: prompt,
     text: {
@@ -1049,7 +1143,7 @@ async function callResponsesVisualDraft(config: AiConfig, prompt: string, screen
   const body = {
     model: config.model,
     temperature: Math.min(config.temperature, 0.7),
-    max_output_tokens: Math.max(config.maxTokens, 4096),
+    max_output_tokens: getConfiguredOutputTokens(config, 1600),
     instructions: "你是网站 CMS 视觉改版助手。只返回 JSON。",
     input: [
       {
@@ -1090,7 +1184,7 @@ async function callChatJsonRepair(config: AiConfig, raw: string) {
   const body = {
     model: config.model,
     temperature: 0,
-    max_tokens: 1600,
+    max_tokens: Math.min(1600, getConfiguredOutputTokens(config, 1600)),
     response_format: { type: "json_object" },
     messages: [
       {
@@ -1127,7 +1221,7 @@ async function callResponsesJsonRepair(config: AiConfig, raw: string) {
   const body = {
     model: config.model,
     temperature: 0,
-    max_output_tokens: 1600,
+    max_output_tokens: Math.min(1600, getConfiguredOutputTokens(config, 1600)),
     instructions: "你是 JSON 修复器。只返回合法 JSON，不要解释。",
     input: [
       "把下面内容修复为合法 JSON，结构必须是：",
@@ -1190,7 +1284,7 @@ async function callChatMediaAnalysis(config: AiConfig, prompt: string, dataUrl?:
   const body = {
     model: config.model,
     temperature: Math.min(config.temperature, 0.4),
-    max_tokens: Math.max(config.maxTokens, 1200),
+    max_tokens: getConfiguredOutputTokens(config, 1200),
     response_format: { type: "json_object" },
     messages: [
       {
@@ -1221,7 +1315,7 @@ async function callResponsesMediaAnalysis(config: AiConfig, prompt: string, data
   const body = {
     model: config.model,
     temperature: Math.min(config.temperature, 0.4),
-    max_output_tokens: Math.max(config.maxTokens, 1200),
+    max_output_tokens: getConfiguredOutputTokens(config, 1200),
     instructions: "你是网站素材库 AI 分析助手。只返回 JSON。",
     input: dataUrl
       ? [

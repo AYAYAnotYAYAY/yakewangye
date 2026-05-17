@@ -194,8 +194,12 @@ function formatAdminError(error: unknown) {
     return "本次请求内容太大。请减少截图数量/图片大小，或先用素材库的“AI 分析未处理素材”，再用纯文字让 AI 根据素材描述改站。";
   }
 
+  if (/AI provider error|provider error|response_format|max_tokens|model/i.test(raw)) {
+    return raw;
+  }
+
   if (/ai_site_draft_failed|ai_site_draft_media_asset_failed|visual_ai_draft_failed|generate_ai_site_draft_failed|generate_ai_site_draft_media_asset_failed/i.test(raw)) {
-    return "AI 生成失败。请先在“AI 配置”测试连接，确认模型可用；如果你用的是文本模型，请不要上传截图。";
+    return "AI 草稿生成失败。AI 连接测试只代表小请求可用，草稿生成还需要模型支持较长 JSON 输出；已将草稿请求优化为更小的分段字段，请重试一次。";
   }
 
   if (/ai_translate_from_zh_failed/i.test(raw)) {
