@@ -94,7 +94,7 @@ function compactArray(values: string[] | undefined, limit: number, maxItemLength
 function getConfiguredOutputTokens(config: AiConfig, fallback: number) {
   const parsed = Number(config.maxTokens);
   const value = Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
-  return Math.min(64000, Math.max(256, value));
+  return Math.max(256, value);
 }
 
 function instructionRequiresMediaAssets(instruction: string, mediaLibrary: MediaLibraryState) {
@@ -1184,7 +1184,7 @@ async function callChatJsonRepair(config: AiConfig, raw: string) {
   const body = {
     model: config.model,
     temperature: 0,
-    max_tokens: Math.min(1600, getConfiguredOutputTokens(config, 1600)),
+    max_tokens: getConfiguredOutputTokens(config, 1600),
     response_format: { type: "json_object" },
     messages: [
       {
@@ -1221,7 +1221,7 @@ async function callResponsesJsonRepair(config: AiConfig, raw: string) {
   const body = {
     model: config.model,
     temperature: 0,
-    max_output_tokens: Math.min(1600, getConfiguredOutputTokens(config, 1600)),
+    max_output_tokens: getConfiguredOutputTokens(config, 1600),
     instructions: "你是 JSON 修复器。只返回合法 JSON，不要解释。",
     input: [
       "把下面内容修复为合法 JSON，结构必须是：",

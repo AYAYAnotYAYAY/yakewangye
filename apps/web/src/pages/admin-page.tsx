@@ -199,7 +199,7 @@ function formatAdminError(error: unknown) {
   }
 
   if (/ai_site_draft_failed|ai_site_draft_media_asset_failed|visual_ai_draft_failed|generate_ai_site_draft_failed|generate_ai_site_draft_media_asset_failed/i.test(raw)) {
-    return "AI 草稿生成失败。AI 连接测试只代表小请求可用，草稿生成还需要模型支持较长 JSON 输出；已将草稿请求优化为更小的分段字段，请重试一次。";
+    return `AI 草稿生成失败：${raw}。网站侧已取消 token 上限；如果仍失败，请看这里显示的供应商原始报错。`;
   }
 
   if (/ai_translate_from_zh_failed/i.test(raw)) {
