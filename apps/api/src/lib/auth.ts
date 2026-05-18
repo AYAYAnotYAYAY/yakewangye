@@ -41,6 +41,77 @@ type AdminCredentialSource =
 
 const { adminConfigFilePath } = getLocalStoragePaths();
 
+// --- Login rate limiting & lockout ---
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_LOGIN_ATTEMPTS_PER_WINDOW = 10;
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+
+type IpLoginState = {
+  failedCount: number;
+  lockedUntil: number;
+  windowStart: number;
+  windowCount: number;
+};
+
+const ipLoginStates = new Map<string, IpLoginState>();
+
+export function getLoginRateLimitCleanup() {
+  const now = Date.now();
+  for (const [ip, state] of ipLoginStates.entries()) {
+    if (state.windowStart + RATE_LIMIT_WINDOW_MS < now && state.lockedUntil < now) {
+      ipLoginStates.delete(ip);
+    }
+  }
+}
+
+export function checkLoginLockout(ip: string): { allowed: false; retryAfterMs?: number } | { allowed: true } {
+  getLoginRateLimitCleanup();
+  const state = ipLoginStates.get(ip);
+
+  if (!state) {
+    return { allowed: true };
+  }
+
+  if (state.lockedUntil > Date.now()) {
+    return { allowed: false, retryAfterMs: state.lockedUntil - Date.now() };
+  }
+
+  if (state.windowStart + RATE_LIMIT_WINDOW_MS < Date.now()) {
+    // Reset window if expired and not locked
+    ipLoginStates.delete(ip);
+    return { allowed: true };
+  }
+
+  if (state.windowCount >= MAX_LOGIN_ATTEMPTS_PER_WINDOW) {
+    return { allowed: false, retryAfterMs: state.windowStart + RATE_LIMIT_WINDOW_MS - Date.now() };
+  }
+
+  return { allowed: true };
+}
+
+export function recordFailedLogin(ip: string) {
+  const now = Date.now();
+  let state = ipLoginStates.get(ip);
+
+  if (!state || state.windowStart + RATE_LIMIT_WINDOW_MS < now) {
+    state = { failedCount: 0, lockedUntil: 0, windowStart: now, windowCount: 0 };
+  }
+
+  state.failedCount++;
+  state.windowCount++;
+
+  if (state.failedCount >= MAX_FAILED_ATTEMPTS) {
+    state.lockedUntil = now + LOCKOUT_DURATION_MS;
+  }
+
+  ipLoginStates.set(ip, state);
+}
+
+export function resetLoginLockout(ip: string) {
+  ipLoginStates.delete(ip);
+}
+
 function getAdminUsernameFromEnv() {
   return process.env.ADMIN_USERNAME?.trim() ?? "";
 }
@@ -50,7 +121,14 @@ function getAdminPasswordFromEnv() {
 }
 
 function getAdminTokenSecret() {
-  return process.env.ADMIN_TOKEN_SECRET ?? "quanyu-dev-secret";
+  const secret = process.env.ADMIN_TOKEN_SECRET?.trim();
+  if (!secret) {
+    throw new Error(
+      "ADMIN_TOKEN_SECRET environment variable is required for production. " +
+        "Generate a strong random secret: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    );
+  }
+  return secret;
 }
 
 function sign(value: string) {
@@ -281,4 +359,78 @@ export function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
   }
 
   return payload;
+}
+
+/**
+ * Change admin password for file-based credentials.
+ * Used by yk.sh CLI tool. env-based credentials must be changed via .env file.
+ */
+export async function changeAdminPassword(oldPassword: string, newPassword: string): Promise<
+  | { ok: true; message: string }
+  | { ok: false; error: string }
+> {
+  const resolved = await resolveAdminCredentialSource();
+
+  if (!resolved.initialized) {
+    return { ok: false, error: "setup_required: 管理员账号尚未初始化" };
+  }
+
+  if (resolved.source === "env") {
+    return {
+      ok: false,
+      error: "env_managed: 密码由环境变量 ADMIN_PASSWORD 管理，请直接修改 .env 文件后重启 PM2",
+    };
+  }
+
+  // Validate old password
+  if (!verifyPassword(oldPassword, resolved.passwordHash)) {
+    return { ok: false, error: "invalid_credentials: 旧密码验证失败" };
+  }
+
+  // Validate new password complexity
+  const complexityError = validatePasswordComplexity(newPassword);
+  if (complexityError) {
+    return { ok: false, error: `weak_password: ${complexityError}` };
+  }
+
+  const fileConfig = await readAdminFileConfig();
+  if (!fileConfig) {
+    return { ok: false, error: "config_read_failed: 无法读取管理员配置文件" };
+  }
+
+  const now = new Date().toISOString();
+  await writeAdminFileConfig({
+    ...fileConfig,
+    passwordHash: hashPasswordForStorage(newPassword),
+    updatedAt: now,
+  });
+
+  return { ok: true, message: "管理员密码已成功修改" };
+}
+
+/**
+ * Validate password meets minimum complexity requirements:
+ * - At least 10 characters
+ * - Contains uppercase letter
+ * - Contains lowercase letter
+ * - Contains digit
+ * - Contains special character
+ */
+export function validatePasswordComplexity(password: string): string | null {
+  if (password.length < 10) {
+    return "密码长度至少 10 位";
+  }
+  if (!/[A-Z]/.test(password)) {
+    return "密码必须包含大写字母";
+  }
+  if (!/[a-z]/.test(password)) {
+    return "密码必须包含小写字母";
+  }
+  if (!/[0-9]/.test(password)) {
+    return "密码必须包含数字";
+  }
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?~`]/.test(password)) {
+    return "密码必须包含特殊字符";
+  }
+  return null;
 }

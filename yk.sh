@@ -1402,6 +1402,172 @@ manage_backup_files() {
   done
 }
 
+validate_password_complexity() {
+  local password="${1}"
+
+  if [[ ${#password} -lt 10 ]]; then
+    echo "密码长度至少 10 位"
+    return 1
+  fi
+
+  if ! [[ "${password}" =~ [A-Z] ]]; then
+    echo "密码必须包含大写字母"
+    return 1
+  fi
+
+  if ! [[ "${password}" =~ [a-z] ]]; then
+    echo "密码必须包含小写字母"
+    return 1
+  fi
+
+  if ! [[ "${password}" =~ [0-9] ]]; then
+    echo "密码必须包含数字"
+    return 1
+  fi
+
+  if ! [[ "${password}" =~ [[:punct:]] ]]; then
+    echo "密码必须包含特殊字符"
+    return 1
+  fi
+
+  return 0
+}
+
+change_admin_password() {
+  step "修改管理员密码"
+
+  local env_file data_dir admin_config_file
+  env_file="$(app_env_file)"
+  data_dir="$(configured_data_dir)"
+  admin_config_file="${data_dir}/admin-config.json"
+
+  if [[ ! -f "${env_file}" ]]; then
+    error "未找到 .env 配置文件: ${env_file}"
+    return 1
+  fi
+
+  local env_username env_password
+  env_username="$(read_env_value "${env_file}" "ADMIN_USERNAME" 2>/dev/null || true)"
+  env_password="$(read_env_value "${env_file}" "ADMIN_PASSWORD" 2>/dev/null || true)"
+
+  if [[ -n "${env_username}" && -n "${env_password}" ]]; then
+    info "检测到密码由环境变量 ADMIN_PASSWORD 管理"
+    echo "  当前用户名: ${env_username}"
+
+    local new_password
+    new_password="$(prompt_value "请输入新密码（≥10 位，含大小写字母+数字+特殊字符）:")"
+
+    if [[ -z "${new_password}" ]]; then
+      warn "密码为空，已取消操作"
+      return 0
+    fi
+
+    local validation_error
+    validation_error="$(validate_password_complexity "${new_password}" 2>&1 || true)"
+
+    if [[ -n "${validation_error}" ]]; then
+      error "${validation_error}"
+      return 1
+    fi
+
+    upsert_env_value "${env_file}" "ADMIN_PASSWORD" "${new_password}"
+    success ".env 中的 ADMIN_PASSWORD 已更新"
+
+    if has_pm2 && pm2_app_exists; then
+      warn "密码由环境变量管理，需要重启 PM2 进程才能生效"
+      if ask_yes_no "是否立即重启 API 进程（${PM2_APP}）？"; then
+        ensure_pm2_api_process
+        success "PM2 已重启，新密码已生效"
+      else
+        warn "请稍后手动重启 PM2 使新密码生效: pm2 restart ${PM2_APP}"
+      fi
+    else
+      success "新密码已写入 .env，启动 API 时将自动生效"
+    fi
+
+    return 0
+  fi
+
+  if [[ -f "${admin_config_file}" ]]; then
+    info "检测到密码由文件管理: ${admin_config_file}"
+
+    if ! command_exists node; then
+      error "此操作需要 Node.js 来验证和加密密码"
+      return 1
+    fi
+
+    local old_password
+    old_password="$(prompt_value "请输入当前管理员密码:")"
+
+    if [[ -z "${old_password}" ]]; then
+      warn "密码为空，已取消操作"
+      return 0
+    fi
+
+    local new_password
+    new_password="$(prompt_value "请输入新密码（≥10 位，含大小写字母+数字+特殊字符）:")"
+
+    if [[ -z "${new_password}" ]]; then
+      warn "密码为空，已取消操作"
+      return 0
+    fi
+
+    local validation_error
+    validation_error="$(validate_password_complexity "${new_password}" 2>&1 || true)"
+
+    if [[ -n "${validation_error}" ]]; then
+      error "${validation_error}"
+      return 1
+    fi
+
+    info "正在验证旧密码并修改..."
+    cd "${APP_DIR}"
+
+    local result
+    result="$(node -e "
+      const { changeAdminPassword } = require('./apps/api/dist/apps/api/src/lib/auth.js');
+      (async () => {
+        const r = await changeAdminPassword(process.argv[1], process.argv[2]);
+        console.log(JSON.stringify(r));
+      })();
+    " "${old_password}" "${new_password}" 2>/dev/null || true)"
+
+    if [[ -z "${result}" ]]; then
+      result="$(node -e "
+        process.env.YK_DATA_DIR = '${data_dir}';
+        const { changeAdminPassword } = require('./apps/api/dist/lib/auth.js');
+        (async () => {
+          const r = await changeAdminPassword(process.argv[1], process.argv[2]);
+          console.log(JSON.stringify(r));
+        })();
+      " "${old_password}" "${new_password}" 2>/dev/null || true)"
+    fi
+
+    if [[ -z "${result}" ]]; then
+      error "无法执行密码修改操作，请确认 API 已构建 (pnpm run build) 且 Node.js 可用"
+      return 1
+    fi
+
+    local ok
+    ok="$(echo "${result}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).ok ? 'true' : 'false')" 2>/dev/null || echo "false")"
+
+    if [[ "${ok}" == "true" ]]; then
+      success "管理员密码已成功修改"
+    else
+      local err_msg
+      err_msg="$(echo "${result}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).error || 'unknown_error')" 2>/dev/null || echo "unknown_error")"
+      error "密码修改失败: ${err_msg}"
+      return 1
+    fi
+
+    return 0
+  fi
+
+  error "未检测到管理员配置（既无 .env ADMIN_PASSWORD，也无 admin-config.json）"
+  warn "请先通过首次部署初始化管理员账号"
+  return 1
+}
+
 show_menu() {
   clear || true
   echo -e "${BOLD}yk 运维菜单${RESET}"
@@ -1414,6 +1580,7 @@ show_menu() {
   echo "6. 从备份整包还原"
   echo "7. 从备份仅恢复数据"
   echo "8. 管理备份文件"
+  echo "9. 修改管理员密码"
   echo "0. 退出"
   echo ""
 }
@@ -1458,6 +1625,10 @@ main() {
         ;;
       8)
         manage_backup_files
+        ;;
+      9)
+        change_admin_password
+        pause
         ;;
       0)
         exit 0

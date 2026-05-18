@@ -8,12 +8,15 @@ import type { MultipartFile } from "@fastify/multipart";
 import { aiConfigSchema, cmsContentSchema, type CmsContent, type Language } from "@quanyu/shared";
 import { z } from "zod";
 import {
+  checkLoginLockout,
   getAdminStatus,
   initializeAdminCredentials,
   issueAdminToken,
   parseAdminLogin,
   parseAdminSetup,
+  recordFailedLogin,
   requireAdmin,
+  resetLoginLockout,
   validateAdminCredentials,
 } from "../../lib/auth";
 import { getUploadsDir, readContent, writeContent } from "../../lib/content-store";
@@ -481,6 +484,16 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   app.get("/api/admin/status", async () => getAdminStatus());
 
   app.post("/api/admin/setup", async (request, reply) => {
+    const status = await getAdminStatus();
+
+    if (status.initialized) {
+      return reply.status(403).send({
+        ok: false,
+        error: "already_initialized",
+        message: "管理员账号已完成初始化，如需修改密码请使用 yk.sh 运维脚本",
+      });
+    }
+
     const parsed = parseAdminSetup(request.body);
 
     if (!parsed.success) {
@@ -509,6 +522,21 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   });
 
   app.post("/api/admin/login", async (request, reply) => {
+    const ip = request.ip || request.headers["x-forwarded-for"]?.toString()?.split(",")[0]?.trim() || "unknown";
+
+    // Check rate limiting / lockout
+    const lockout = checkLoginLockout(ip);
+    if (!lockout.allowed) {
+      const retryAfterSeconds = Math.ceil((lockout.retryAfterMs ?? 60000) / 1000);
+      reply.header("Retry-After", String(retryAfterSeconds));
+      return reply.status(429).send({
+        ok: false,
+        error: "rate_limited",
+        retryAfterSeconds,
+        message: `请求过于频繁或密码错误次数过多。请在 ${retryAfterSeconds} 秒后重试`,
+      });
+    }
+
     const parsed = parseAdminLogin(request.body);
 
     if (!parsed.success) {
@@ -521,12 +549,14 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const validation = await validateAdminCredentials(parsed.data.username, parsed.data.password);
 
     if (!validation.ok) {
+      recordFailedLogin(ip);
       return reply.status(validation.reason === "setup_required" ? 409 : 401).send({
         ok: false,
         error: validation.reason,
       });
     }
 
+    resetLoginLockout(ip);
     return {
       ok: true,
       token: issueAdminToken(validation.username),
