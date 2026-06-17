@@ -80,6 +80,14 @@ export function Header({ settings, language, dictionary, onLanguageChange }: Hea
         </button>
       </div>
 
+      <nav className="site-nav-mobile-quick" aria-label="快捷导航">
+        {settings.navigation.map((item) => (
+          <a key={item.id} href={toAnchor(item.href)} onClick={handleNavClick}>
+            {item.label}
+          </a>
+        ))}
+      </nav>
+
       {/* Mobile drawer */}
       <div className={`site-nav-mobile${menuOpen ? " open" : ""}`}>
         <div className="site-nav-mobile-languages">
