@@ -74,7 +74,8 @@ body::before {
 
 main {
   position: relative;
-  overflow: hidden;
+  padding-top: var(--header-offset);
+  overflow-x: hidden;
 }
 
 a {
@@ -472,8 +473,10 @@ h1, h2, h3, h4 {
    Header
    ============================================================ */
 .site-header {
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 200;
   background: var(--surface-glass);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -748,10 +751,6 @@ h1, h2, h3, h4 {
 .site-nav-mobile-languages .site-language-menu-popover {
   left: 0;
   right: auto;
-}
-
-.site-nav-mobile-quick {
-  display: none;
 }
 
 @keyframes slideDown {
@@ -2343,7 +2342,6 @@ h1, h2, h3, h4 {
   .site-menu-toggle,
   .chat-fab,
   .admin-nav-item,
-  .site-nav-mobile-quick a,
   .site-nav-mobile a {
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
@@ -2384,7 +2382,7 @@ h1, h2, h3, h4 {
 /* ── Show hamburger, hide desktop nav on mobile ── */
 @media (max-width: 768px) {
   :root {
-    --header-offset: 108px;
+    --header-offset: 60px;
   }
 
   .site-nav {
@@ -2405,55 +2403,9 @@ h1, h2, h3, h4 {
     padding: 0 16px;
   }
 
-  .site-nav-mobile-quick {
-    display: flex;
-    gap: 8px;
-    max-width: var(--container);
-    margin: 0 auto;
-    padding: 0 16px 10px;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
-    scroll-snap-type: x proximity;
-  }
-
-  .site-nav-mobile-quick::-webkit-scrollbar {
-    display: none;
-  }
-
-  .site-nav-mobile-quick a {
-    flex: 0 0 auto;
-    min-height: 38px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 14px;
-    border: 1px solid rgba(11, 35, 64, 0.1);
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.76);
-    color: var(--text);
-    font-size: 14px;
-    font-weight: 800;
-    line-height: 1;
-    box-shadow: 0 4px 14px rgba(11, 35, 64, 0.06);
-    scroll-snap-align: start;
-    white-space: nowrap;
-  }
-
-  .site-nav-mobile-quick a:active {
-    background: var(--primary-light);
-    border-color: rgba(11, 92, 255, 0.28);
-    color: var(--primary);
-  }
-
   /* Mobile nav drawer: larger touch targets */
   .site-nav-mobile {
-    padding-top: 10px;
-  }
-
-  .site-nav-mobile > a {
-    display: none;
+    padding-top: 12px;
   }
 
   .site-nav-mobile a {

@@ -3,7 +3,8 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import "./globals.css";
 
-// Scroll-reveal: observe all section elements and .reveal elements
+// Scroll-reveal is opt-in. Hiding every section before it intersects can leave
+// blank screens during fast mobile scrolling.
 function initReveal() {
   const io = new IntersectionObserver(
     (entries) => {
@@ -17,11 +18,9 @@ function initReveal() {
     { threshold: 0.08, rootMargin: "0px 0px -40px 0px" },
   );
 
-  // Observe existing elements
   const observe = () => {
-    document.querySelectorAll("section, .reveal").forEach((el) => {
+    document.querySelectorAll(".reveal").forEach((el) => {
       if (!el.classList.contains("visible")) {
-        el.classList.add("reveal");
         io.observe(el);
       }
     });
