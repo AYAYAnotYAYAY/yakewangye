@@ -43,10 +43,14 @@ export function Header({ settings, language, dictionary, onLanguageChange }: Hea
 
   return (
     <header className={`site-header${scrolled ? " scrolled" : ""}`} ref={navRef as React.RefObject<HTMLElement>}>
+      <div className="site-topbar">
+        <div className="site-topbar-inner">
+          <span className="site-logo-notice">{settings.topbarNotice}</span>
+        </div>
+      </div>
       <div className="site-header-inner">
         {/* Logo */}
         <a href="#" className="site-logo">
-          <span className="site-logo-notice">{settings.topbarNotice}</span>
           <span className="site-logo-name">{settings.brandName}</span>
         </a>
 
